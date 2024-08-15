@@ -1,0 +1,57 @@
+# @package _global_
+data: pusht_vision_ref_cond
+#datadir: /home/${oc.env:USER}/safe_flow_motion_policy/flow-matching-policies/data/lasa_handwriting
+datadir: /home/dia1rng/hackathon/flow-matching-policies/data/pusht
+#data: earthquake
+#datadir: /home/${oc.env:USER}/Documents/KIT/FlowMatchingPolicies/riemannian-fm/data/earth_data
+n_pred: 16
+n_ref: 2
+n_cond: 0
+w_cond: 0  # Considered if > 0
+image_dim: 96
+div_mode: rademacher
+
+lambda_x: 1.0
+lambda_tau: 6.0
+
+optimal_transport: False
+
+crop: True
+
+use_wandb: False
+
+data_seed: null  # seed for creating the data splits. By default, uses global seed.
+
+model_type: Unet
+
+# 128 * 8, 256 * 16, 64 * 5
+model:
+  d_model: 64
+  num_layers: 5
+  actfn: swish
+  atol: 1e-7
+  rtol: 1e-7
+  fourier: null
+  metric_normalize: False
+
+# lr wd default: 0.0001 0.001  ablation lr: 0.00001 0.00005  wd: 0.005 0.01
+optim:
+  batch_size: 8
+  lr: 0.00005
+  wd: 0.001
+  ema_decay: 0.999
+  val_batch_size: 200
+  num_iterations: 1000000
+
+  scheduler: cosine
+  grad_clip: 0.0
+  eps: 1e-8
+
+seed: 0
+
+val_every: 1.
+ckpt_every: 1
+visualize: False
+
+eval_projx: True
+local_coords: False
