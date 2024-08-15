@@ -1,0 +1,46 @@
+# @package _global_
+data: pusht_euclidean_ref_cond
+#datadir: /home/${oc.env:USER}/Documents/KIT/FlowMatchingPolicies/data/pusht
+datadir: ./../../data/pusht
+n_pred: 16
+n_ref: 2
+n_cond: 0
+w_cond: 0  # Considered if > 0
+obs_dim: 5
+div_mode: rademacher  # TODO check this better
+
+use_wandb: False
+data_seed: null  # seed for creating the data splits. By default, uses global seed.
+
+model_type: tMLP
+
+model:
+  d_model: 128
+  num_layers: 8
+  actfn: swish
+  atol: 1e-7
+  rtol: 1e-7
+  fourier: null
+  metric_normalize: False
+
+optim:
+  batch_size: 256
+  lr: 0.0001
+  wd: 0.001
+  ema_decay: 0.999
+  val_batch_size: 20000
+  num_iterations: 500000
+#  num_iterations: 1000000
+
+  scheduler: cosine
+  grad_clip: 0.0
+  eps: 1e-8
+
+seed: 0
+
+val_every: 1000
+ckpt_every: null
+visualize: False
+
+eval_projx: True
+local_coords: False
