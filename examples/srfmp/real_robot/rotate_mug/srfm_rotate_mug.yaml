@@ -1,0 +1,58 @@
+# @package _global_
+data: rotate_mug
+#data_dir: '/home/dia1rng/hackathon/rotate_cup/robodemo_rotate_4_18'
+#data_dir: '/home/dia1rng/hackathon/6_6_rotate_cup 1/6_6_rotate_cup'
+#data_dir: '/home/dia1rng/hackathon/easy_rotation_6_20'
+#data_dir: '/home/dia1rng/hackathon/easy_rotation_6_20_sample250'
+data_dir: '/home/dia1rng/hackathon/6_6_rotate_cup 1/6_6_rotate_cup_org_data_samplingtime250'
+n_pred: 16
+n_ref: 2
+n_cond: 0
+w_cond: 0  # Considered if > 0
+div_mode: rademacher
+
+image_height: 240
+image_width: 320
+image_dim: 96
+
+lambda_x: 2.5
+lambda_tau: 2.5
+
+use_gripper_img: False
+
+normalize_pos_quat: True
+use_wandb: False
+data_seed: null  # seed for creating the data splits. By default, uses global seed.
+
+model_type: Unet
+
+# 128 * 8, 256 * 16, 64 * 5
+model:
+  d_model: 64
+  num_layers: 5
+  actfn: swish
+  atol: 1e-7
+  rtol: 1e-7
+  fourier: null
+  metric_normalize: False
+
+optim:
+  batch_size: 8
+  lr: 0.0001
+  wd: 0.001
+  ema_decay: 0.999
+  val_batch_size: 8
+  num_iterations: 1000000
+
+  scheduler: cosine
+  grad_clip: 0.0
+  eps: 1e-8
+
+seed: 0
+
+val_every: 1.
+ckpt_every: 1
+visualize: False
+
+eval_projx: True
+local_coords: False
