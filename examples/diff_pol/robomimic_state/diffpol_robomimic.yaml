@@ -1,0 +1,47 @@
+# @package _global_
+#data_dir: '/home/dia1rng/hackathon/rotate_cup/robodemo_rotate_4_18'
+data: 'Robomimic'
+task: 'tool_hang'
+# can lift square tool_hang  transport
+n_pred: 16
+n_ref: 2
+n_cond: 0
+w_cond: 0  # Considered if > 0
+div_mode: rademacher
+
+use_wandb: False
+data_seed: null  # seed for creating the data splits. By default, uses global seed.
+
+model_type: Unet
+diffusion_model: DDIM
+
+# 128 * 8, 256 * 16, 64 * 5
+model:
+  d_model: 64
+  num_layers: 5
+  actfn: swish
+  atol: 1e-7
+  rtol: 1e-7
+  fourier: null
+  metric_normalize: False
+
+optim:
+  batch_size: 256
+  lr: 0.0001
+  wd: 0.001
+  ema_decay: 0.999
+  val_batch_size: 256
+  num_iterations: 1000000
+
+  scheduler: cosine
+  grad_clip: 0.0
+  eps: 1e-8
+
+seed: 0
+
+val_every: 1.
+ckpt_every: 1
+visualize: False
+
+eval_projx: True
+local_coords: False
