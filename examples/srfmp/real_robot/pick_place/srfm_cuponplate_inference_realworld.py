@@ -1,8 +1,5 @@
 import os
-import sys
-
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/stable_flow')
-from stable_model_vision_dishgrasp_pl_learntau import SRFMVisionResnetTrajsModuleLearnTau
+from stable_flow.stable_model_vision_dishgrasp_pl_learntau import SRFMVisionResnetTrajsModuleLearnTau
 from omegaconf import OmegaConf
 from glob import glob
 
@@ -29,15 +26,28 @@ GENERATE_TRAJECTORY = False
 GRIPPER_OPEN_STATE = 0.02
 
 
+'''
+Test SRFMP on real robot Pick Place task
+'''
+
+
+# get robot end effector state
 def get_info(rpc):
+    '''
+    get robot end effector state from rpc interface
+    '''
     arm_state = rpc.get_robot_state()
     pose_loc = arm_state.pose.vec(quat_order="wxyz")
     gripper_state = arm_state.gripper[0]
     return pose_loc, gripper_state
 
 
+# image observation vector
 def get_image(rs_recorder, transform_cam, device, show_on_screen=True, fix_img_list=None, use_grip_img=False,
               grip_img_list=None):
+    '''
+    get image from realsense interface
+    '''
     realsense_frames = rs_recorder.get_frame()
     to_plot = rs_recorder._visualize_frame(realsense_frames).copy()
     # if show_on_screen:
@@ -76,7 +86,18 @@ def get_image(rs_recorder, transform_cam, device, show_on_screen=True, fix_img_l
     # SHAPE 1 * 3 * 480 * 640
 
 
+# observation vector
 def get_ref(state_list, grip_state_list, fix_img_list, grip_img_list, model):
+    '''
+    get observation condition vector
+
+    state_list: list of past 2 frame end effector state
+    grip_sate_list: list of past 2 frame gripper state
+    fix_img_list: list of past 2 framw over-the-shoulder camera observation
+    grip_img_list: list of past 2 fram in-hnad camera observation
+    use_imgae: stae or vision bsed observation
+    model: SRFMP model
+    '''
     pre_fix_img = fix_img_list[-2]
     cur_fix_img = fix_img_list[-1]
     pre_grip_img = grip_img_list[-2]
@@ -103,8 +124,24 @@ def get_ref(state_list, grip_state_list, fix_img_list, grip_img_list, model):
     return torch.cat((img_scalar, xref_pos_quat, xref_gripper), axis=1).float()
 
 
+# once experiment with SRFMP on task Pick Place
 def infer(model, rpc, cfg, execute_steps=8, obs_horizon=2, ctr_grip=False, video_name='', no_crop=True,
           adp=False, crop_percent=0.2, save_folder='', ode_num=5):
+    '''once experiment of SRFMP on Pick Place real robot task
+    model: SRFMP model
+    rpc: interface with robot
+    cfg: config file
+    execute_steps: execution horizon
+    obs_horizon: observation horizon
+    ctr_grip: whether to control gripper or not
+    video_name: name of saved video
+    np_crop: whether to crop image or not
+    adp: adaptive step size for ODE solving
+    crop_percent: percentage of crop
+    save_folder: folder to save all experiment data
+    ode_num: ODE solving steps
+    '''
+
     step = 0
     # resize Height * Width
     if no_crop:
@@ -185,10 +222,6 @@ def infer(model, rpc, cfg, execute_steps=8, obs_horizon=2, ctr_grip=False, video
             grip_img_deque.append(gripper_image)
             # fix_img_list.append(fix_img.cpu().numpy())
             step += 1
-            # np.save(save_folder + '/img' + video_name + '_exc' + str(execute_steps) + '.npy', fix_img_list)
-            # np.save(save_folder + '/state' + video_name + '_exc' + str(execute_steps) + '.npy', real_state_list)
-            # np.save(save_folder + '/action' + video_name + '_exc' + str(execute_steps) + '.npy', predict_action_list)
-            # np.save(save_folder + '/time_' + video_name + '.npy', infer_time_list)
             # save_array_safe(fix_img_list, save_folder + '/img' + video_name + '_exc' + str(execute_steps) + '.npy')
             # save_array_safe(real_state_list,
             #                 save_folder + '/state' + video_name + '_exc' + str(execute_steps) + '.npy')
@@ -217,6 +250,16 @@ def save_array_safe(arr, filename):
 
 
 def infer_with_dataloader(model, rpc, cfg, execute_steps=8, obs_horizon=2, data_loader=None, pos_use_loadar=False):
+    '''experiment with SRFMP on real robot but get observation from dataloadar
+
+           model: RFMP model
+           rpc: interface with robot
+           cfg: config file
+           execute_steps: execution horizon
+           obs_horizon: observation horizon
+           data_loadar: data loadar
+           pos_use_loadar: whether to use state information from dataloadar or read from real robot
+           '''
     crop_height = int(cfg.image_height * 0.9)
     crop_width = int(cfg.image_width * 0.9)
     transform_cam = T.Compose(
@@ -256,24 +299,27 @@ def infer_with_dataloader(model, rpc, cfg, execute_steps=8, obs_horizon=2, data_
 
 
 if __name__ == '__main__':
+    # specific info for used model
     add_info = ('_tauencode_lambda25_crop1')
     # _fewepochs_smallertaunet_uncorrelattauvf
     cfg = OmegaConf.load('srfm_cuponplate.yaml')
     checkpoints_dir = "checkpoints/checkpoints_rfm_" + cfg.data + \
                       "_n" + str(cfg.n_pred) + "_r" + str(cfg.n_ref) + "_c" + str(cfg.n_cond) + "_w" + str(
         cfg.w_cond) + cfg.model_type + add_info
-    # model = ManifoldVisionTrajectoriesDishGraspFMLitModule(cfg)
+    # construct model
     model = SRFMVisionResnetTrajsModuleLearnTau(cfg)
 
     best_checkpoint = glob(checkpoints_dir + "/**/epoch**.ckpt", recursive=True)[0]
     last_checkpoint = './' + checkpoints_dir + '/last.ckpt'
     model_checkpoint = './' + checkpoints_dir + '/model.ckpt'
+    # load model from checkpoints
     model = model.load_from_checkpoint(best_checkpoint, cfg=cfg)
     model.to(torch.device('cuda'))
     model.small_var = True
     print('normalize', model.normalize)
     print('use gripper img ', model.use_gripper_img)
 
+    # initialize robot interface
     rpc = RPCInterface("10.87.170.254")  # 10.87.172.60
 
     data_folder_path = '/home/dia1rng/hackathon/hachaton_cuponboard_new_dataset/cuponplate1_robot_demos'

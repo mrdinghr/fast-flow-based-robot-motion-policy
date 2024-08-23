@@ -8,14 +8,16 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks import LearningRateMonitor
 
-import sys
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/stable_flow')
-from stable_model_vision_dishgrasp_pl_learntau import SRFMVisionResnetTrajsModuleLearnTau
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/data/real_robot')
-from dummy_robot_arm1 import get_loaders
+from stable_flow.stable_model_vision_dishgrasp_pl_learntau import SRFMVisionResnetTrajsModuleLearnTau
+from data.real_robot.dummy_robot_arm1 import get_loaders
 from types import SimpleNamespace
 
 import argparse
+
+
+'''
+script for training SRFMP on real robto Pick Place task
+'''
 
 
 if __name__ == '__main__':
@@ -28,6 +30,8 @@ if __name__ == '__main__':
     # Load config
     cfg = OmegaConf.load('srfm_cuponplate.yaml')
     cfg.model_type = 'Unet'
+
+    # data loadar from demonstration
     data_folder = cfg.data_dir
     data_args = SimpleNamespace()
     data_args.ablation = 'vf_vg'
@@ -48,6 +52,8 @@ if __name__ == '__main__':
     # Construct model
     model = SRFMVisionResnetTrajsModuleLearnTau(cfg)
     print(model)
+
+    # specific info for current training
     add_info = '_tttt'
     # Checkpointing, logging, and other misc.
     checkpoints_dir = "checkpoints/checkpoints_rfm_" + cfg.data + \

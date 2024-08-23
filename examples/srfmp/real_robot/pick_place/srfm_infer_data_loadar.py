@@ -14,7 +14,18 @@ import torch
 import cv2
 
 
+'''
+SRFMP replay with recoded demonstration
+'''
+
+
 def compare_demo_gen(batch, action):
+    '''
+        compare the generated trajectories with recorded trajectories
+
+        batch: from data loadar, the recorded demonstration
+        action: the generated trajecctory by RFMP
+        '''
     demo_pos_quat = batch['future_pos_quat'][0]
     demo_grip_pos = batch['future_gripper'][0]
     gen_pos_quat = action[:, :7]
@@ -28,7 +39,14 @@ def compare_demo_gen(batch, action):
     plt.show()
 
 
-def infer_whole_traj(data_loadar, model, execute_horizon=8, save_video=False, no_crop=True, ode_steps=10):
+def infer_whole_traj(data_loadar, model, execute_horizon=8, save_video=False, ode_steps=10):
+    '''
+    data_loadar: train or validation data loadar
+    model: SRFMP model
+    execute_horizon: execution horizon
+    save_video: whether to save video
+    ode_steps: ODE solving steps during generation
+    '''
     gen_state_list = []
     demo_state_list = []
     demo_grip_list = []
@@ -47,8 +65,8 @@ def infer_whole_traj(data_loadar, model, execute_horizon=8, save_video=False, no
             actions = model.sample_all(1, model.device, xref=xref, xcond=xcond, different_sample=True,
                                        ode_steps=ode_steps, adp=False)
             infer_time_list.append(time.time() - start_time)
-            print('tau series ', actions[:, 0, -1])
-            actions = actions[-1, 0, :-1].reshape((cfg.n_pred, model.dim))
+            # print('tau series ', actions[:, 0, -1])
+            actions = actions[0, :-1].reshape((cfg.n_pred, model.dim))
 
             if cfg.normalize_pos_quat:
                 actions[..., :-1] = model.denormalize_pos_quat(actions[..., :-1])
@@ -100,7 +118,10 @@ def infer_whole_traj(data_loadar, model, execute_horizon=8, save_video=False, no
 
 
 if __name__ == '__main__':
+    # load cfg for SRFMP model
     cfg = OmegaConf.load('srfm_cuponplate.yaml')
+
+    # get dataloadar from demonstration
     data_folder = cfg.data_dir
     data_args = SimpleNamespace()
     data_args.ablation = 'vf_vg'
@@ -118,6 +139,8 @@ if __name__ == '__main__':
     train_loader, val_loader, _ = get_debug_loaders(batch_size=cfg.optim.batch_size, args=data_args,
                                                     data_folder=data_folder,
                                                     drop_last=False)
+
+    # load SRFMP from checkpoint
     checkpoints_dir = "checkpoints/checkpoints_rfm_" + cfg.data + \
                       "_n" + str(cfg.n_pred) + "_r" + str(cfg.n_ref) + "_c" + str(cfg.n_cond) + "_w" + str(
         cfg.w_cond) + cfg.model_type + add_info
@@ -127,7 +150,7 @@ if __name__ == '__main__':
     last_checkpoint = './' + checkpoints_dir + '/last.ckpt'
     model_checkpoint = './' + checkpoints_dir + '/model.ckpt'
     model = model.load_from_checkpoint(best_checkpoint, cfg=cfg)
-    print(model)
+    # print(model)
     model.small_var = True
     model.to(torch.device('cuda'))
-    infer_whole_traj(val_loader, model, execute_horizon=8, save_video=False, ode_steps=2)
+    infer_whole_traj(val_loader, model, execute_horizon=8, save_video=False, ode_steps=5)
