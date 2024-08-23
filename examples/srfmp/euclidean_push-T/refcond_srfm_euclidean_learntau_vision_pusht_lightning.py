@@ -8,10 +8,17 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 
 from manifm.datasets import get_loaders
 import argparse
-import sys
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/stable_flow')
-from stable_model_vision_trajs_pl_learntau import SRFMVisionResnetTrajsModuleLearnTau
+
+from stable_flow.stable_model_vision_trajs_pl_learntau import SRFMVisionResnetTrajsModuleLearnTau
 import wandb
+
+
+'''
+training SRFMP on Euclidean PushT task
+
+for observation horizon > 2, use 'pusht_vision_ref_cond_band' as 'data';
+observation horizon = 2, use 'pusht_vision_ref_cond' as 'data';
+'''
 
 
 if __name__ == '__main__':
@@ -19,6 +26,7 @@ if __name__ == '__main__':
     parser.add_argument('--model_type', default='tMLP', type=str)
     args = parser.parse_args()
 
+    # specific info for current training setting
     add_info = '_TTTTTT'
     print('load args')
     # Load config
@@ -27,6 +35,7 @@ if __name__ == '__main__':
     # Load dataset
     train_loader, val_loader, test_loader = get_loaders(cfg)
     print('data load')
+    # initial wandb
     if cfg.use_wandb:
         wb_key = OmegaConf.load('/home/dia1rng/hackathon/flow-matching-policies/wandb_key.yml')
         wandb.login(key=wb_key.wandb_key, relogin=True)

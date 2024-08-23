@@ -16,23 +16,39 @@ import matplotlib
 matplotlib.use('Agg')
 
 from manifm.datasets import _get_dataset
-import sys
 
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/stable_flow')
-from stable_model_vision_trajs_pl_learntau import SRFMVisionResnetTrajsModuleLearnTau
+from stable_flow.stable_model_vision_trajs_pl_learntau import SRFMVisionResnetTrajsModuleLearnTau
 from diffusion_policy.env.pusht.pusht_image_env import PushTImageEnv
 from diffusion_policy.dataset.pusht_state_dataset import normalize_data, unnormalize_data
 
 import torchvision.transforms as Transform
 
-# if torch.cuda.is_available():
-#     device = torch.cuda.current_device()
-# else:
-#     device = 'cpu'
+
 device = torch.device('cuda')
 
 
+'''
+Test SRFMP on Euclidean PushT task
+for observation horizon > 2, use 'pusht_vision_ref_cond_band' as 'data';
+observation horizon = 2, use 'pusht_vision_ref_cond' as 'data';
+
+'''
+
+
+# when observation horizon = 2
 def inference(stats, model, obs_horizon, pred_horizon, action_horizon, seed=100000, crop=False, adp=False, ode_steps=10, new_unpack=True):
+    '''once experiment of SRFMP on Euclidean PushT woth observation horizon=2
+
+    stats: statistic data from demonstration, used for normalizetion
+    model: SRFMP model
+    obs_horizon: observation horizon
+    action_horizon: execution horizon
+    seed: seed for env initialization
+    crop: whether to crop image
+    adp: adaptive step size during ODE solving
+    ode_steps: ODE solving steps
+    new_unpack: whether sequential or parallel merge observation condition vector for different time frame
+    '''
     if not os.path.exists(checkpoints_dir + '/automatic_dt/ode_step' + str(ode_steps)):
         os.mkdir(checkpoints_dir + '/automatic_dt/ode_step' + str(ode_steps))
 
@@ -149,7 +165,20 @@ def inference(stats, model, obs_horizon, pred_horizon, action_horizon, seed=1000
     return max(rewards)
 
 
+# when observation horizon bigger than 2
 def inference_band(stats, model, obs_horizon, pred_horizon, action_horizon, seed=100000, crop=False, adp=False, ode_steps=10, new_unpack=False):
+    '''once experiment SRFMP on euclidean PushT with observation horizon > 2
+
+        stats: statistic data from demonstration, used for normalizetion
+        model: SRFMP model
+        obs_horizon: observation horizon
+        action_horizon: execution horizon
+        seed: seed for env initialization
+        crop: whether to crop image
+        adp: adaptive step size during ODE solving
+        ode_steps: ODE solving steps
+        new_unpack: whether sequential or parallel merge observation condition vector for different time frame
+        '''
     if not os.path.exists(checkpoints_dir + '/automatic_dt/ode_step' + str(ode_steps)):
         os.mkdir(checkpoints_dir + '/automatic_dt/ode_step' + str(ode_steps))
 
@@ -273,11 +302,7 @@ if __name__ == '__main__':
                       "_n" + str(cfg.n_pred) + "_r" + str(cfg.n_ref) + "_c" + str(cfg.n_cond) + "_w" + str(
         cfg.w_cond) + cfg.model_type + add_info
 
-    # Number of steps and actions per step
-    # n_actions = 1
-    # n_steps = int(200 / n_actions)
-
-    # Load dataset
+    # Load dataset to get normalization range
     dataset, _ = _get_dataset(cfg)
 
     # Construct model
@@ -286,15 +311,14 @@ if __name__ == '__main__':
     model.small_var = True
     best_checkpoint = glob(checkpoints_dir + "/**/epoch**.ckpt", recursive=True)[0]
     last_checkpoint = './' + checkpoints_dir + '/last.ckpt'
-    # model_checkpoint = './' + checkpoints_dir + '/model.ckpt'
+    # load model from checkpoint
     model = model.load_from_checkpoint(best_checkpoint, cfg=cfg)
     model.to(torch.device('cuda'))  # cuda  cpu
 
     # Training data statistics (min, max) for each dim
     stats = dataset.stats
 
-    # inference(stats, model, obs_horizon=cfg.n_ref, pred_horizon=cfg.n_pred, action_horizon=int(8),
-    #           seed=66)
+    # test with different seeds and ODE solving steps
     if not os.path.exists(checkpoints_dir + '/automatic_dt'):
         os.mkdir(checkpoints_dir + '/automatic_dt')
     for ode_steps in [1, 3, 5, 10]:

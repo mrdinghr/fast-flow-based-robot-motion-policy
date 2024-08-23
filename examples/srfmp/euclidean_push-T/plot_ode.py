@@ -33,18 +33,33 @@ import cv2
 device = 'cpu'
 
 
+'''
+visualize the probability transfer process during test 
+SRFMP on Euclidean PushT
+'''
+
+
 def inference(stats, model, obs_horizon, pred_horizon, action_horizon, seed=100000, crop=False, adp=False, ode_steps=10,
               save_folder='', save=False, max_execution_steps=500):
-    # limit enviornment interaction to 200 steps before termination
-
+    '''
+            stats: statistic data from demonstration, used for normalizetion
+            model: SRFMP model
+            obs_horizon: observation horizon
+            pred_horizon: prediction horizon
+            action_horizon: execution horizon
+            seed: seed for env initialization
+            crop: whether to crop image
+            adp: adaptive step size during ODE solving
+            ode_steps: ODE solving steps
+            save_folder: folder to save experiment data
+            max_execution_steps: maximum roll-outs
+    '''
     env = PushTImageEnv()
     # use a seed >200 to avoid initial states seen in the training dataset
     env.seed(seed)
     stats['agent_pos'] = {'min': stats['state']['min'][:2], 'max': stats['state']['max'][:2]}
-    # stats['images'] = {'min': stats['img']['min'].repeat(96 * 96).reshape((3, 96, 96)), 'max': stats['img']['max'].repeat(96 *96).reshape((3, 96, 96))}
 
     # get first observation
-    # obs, info = env.reset()
     obs = env.reset()
 
     # keep a queue of last 2 steps of observations
@@ -159,6 +174,15 @@ def inference(stats, model, obs_horizon, pred_horizon, action_horizon, seed=1000
 
 # env_img: 3 * W * H, rgb format
 def plot_ode_solving_process_on_image(ode_actions, env_img, img_id=0, save_folder='', save=False):
+    '''
+    visualize the generation process
+
+    ode_actions:  intermediate variables during ODE solving process
+    env_img: observation of PushT env
+    img_id: the title or id current plot image, used for saving image
+    save_folder: folder to save image
+    save: whether to save or not
+    '''
     for ode_step_id, ode_step_action in enumerate(ode_actions):
         ode_step_action = ode_step_action * 96 / 512
         plt.imshow(env_img)
@@ -181,6 +205,15 @@ def plot_ode_solving_process_on_image(ode_actions, env_img, img_id=0, save_folde
 
 
 def plot_predicted_actions_series_on_iamge(action_series, env_img, save=False, img_id=0, save_folder=''):
+    '''
+    visualize the final generated action series on image
+
+    action_series: generated action series by SRFMP
+    env_img: observation of PushT env
+    save: whether to save image
+    img_id: id of current image, used for saving
+    save_folder: folder to save image
+    '''
     action_series = action_series * 96 / 512
     # fig = plt.figure()
     plt.imshow(env_img)
@@ -223,10 +256,6 @@ if __name__ == '__main__':
                       "_n" + str(cfg.n_pred) + "_r" + str(cfg.n_ref) + "_c" + str(cfg.n_cond) + "_w" + str(
         cfg.w_cond) + cfg.model_type + add_info
 
-    # Number of steps and actions per step
-    # n_actions = 1
-    # n_steps = int(200 / n_actions)
-
     # Load dataset
     dataset, _ = _get_dataset(cfg)
 
@@ -236,7 +265,7 @@ if __name__ == '__main__':
     model.small_var = True
     best_checkpoint = glob(checkpoints_dir + "/**/epoch**.ckpt", recursive=True)[0]
     last_checkpoint = './' + checkpoints_dir + '/last.ckpt'
-    # model_checkpoint = './' + checkpoints_dir + '/model.ckpt'
+    # load model from checkpoint
     model = model.load_from_checkpoint(best_checkpoint, cfg=cfg)
     model.to(torch.device('cpu'))  # cuda  cpu
 
