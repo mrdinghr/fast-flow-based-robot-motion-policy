@@ -5,9 +5,13 @@ from robomimic.config import config_factory
 import robomimic.utils.obs_utils as ObsUtils
 
 
-def get_robomimic_image_dataloadar(cfg):
+# Robomimic dataloadar with vision observation
+def get_robomimic_image_dataloadar(cfg, path=None):
+    '''
+    this function is used for getting train & validation dataloadar of Robomimic tasks with vision-based observation
+    '''
     config = config_factory(algo_name='bc')
-    config.train.data = '/home/dia1rng/robomimic/datasets/' + cfg.task + '/ph/image_v141.hdf5'
+    config.train.data = cfg.dataset_path + cfg.task + '/ph/image_v141.hdf5'
     config.train.batch_size = cfg.optim.batch_size
     config.experiment.validate = True
     config.train.hdf5_filter_key = "train"

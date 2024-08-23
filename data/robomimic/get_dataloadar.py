@@ -5,9 +5,13 @@ from robomimic.config import config_factory
 import robomimic.utils.obs_utils as ObsUtils
 
 
+# robomimit dataloadar with state observation
 def get_robomimic_dataloadar(cfg):
+    '''
+    this function is used for get dataloadar of Robomimic task with state-based observation
+    '''
     config = config_factory(algo_name='bc')
-    config.train.data = '/home/dia1rng/robomimic/datasets/' + cfg.task + '/ph/low_dim_v141.hdf5'
+    config.train.data = cfg.dataset_path + cfg.task + '/ph/low_dim_v141.hdf5'
     config.train.batch_size = cfg.optim.batch_size
     config.experiment.validate = True
     config.train.hdf5_filter_key = "train"
