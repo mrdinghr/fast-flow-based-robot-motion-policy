@@ -10,6 +10,9 @@ device = torch.device('cuda')
 
 
 def cal_transition_smooth(trajectory):
+    '''
+    calculate the smoothness of transition part of robot arm trajectory
+    '''
     trajectory = torch.from_numpy(trajectory).to(device)
     vel = torch.diff(trajectory, axis=0)
     acc = torch.diff(vel, axis=0)
@@ -19,6 +22,9 @@ def cal_transition_smooth(trajectory):
 
 
 def cal_rotation_smooth(rotate_traj):
+    '''
+    calculate smoothness of rotation part of robot arm trajectory
+    '''
     manifold = Sphere()
     rotate_traj = torch.from_numpy(rotate_traj)
     vel = manifold.logmap(rotate_traj[:-1], rotate_traj[1:])
@@ -29,6 +35,9 @@ def cal_rotation_smooth(rotate_traj):
 
 
 def loop_folder_total_smooth(folder, save_folder=None):
+    '''
+    load the saved trajectory
+    '''
     if save_folder is None:
         save_folder = folder
     total_trans_smooth = []

@@ -2,11 +2,7 @@ import os.path
 
 import numpy as np
 from omegaconf import OmegaConf
-import sys
-
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/manifm')
-from model_trajs_state_robomimic_pl import ManifoldFMRobomimicLitModule
-from glob import glob
+from manifm.model_trajs_state_robomimic_pl import ManifoldFMRobomimicLitModule
 import torch
 import robomimic.utils.env_utils as EnvUtils
 import robomimic.utils.file_utils as FileUtils
@@ -14,8 +10,6 @@ import matplotlib
 matplotlib.use('TkAgg')
 from robomimic.config import config_factory
 import robomimic.utils.obs_utils as ObsUtils
-
-from robomimic.utils.train_utils import run_rollout
 import matplotlib.pyplot as plt
 import time
 import collections
@@ -23,6 +17,12 @@ from tqdm import tqdm
 import cv2
 
 
+'''
+test RFMP on Robomimic with state-based observation
+'''
+
+
+# get observation condition vector
 def get_ref(obs_deque):
     pre_xref_object = obs_deque[0]['object']
     cur_xref_object = obs_deque[1]['object']
@@ -41,6 +41,17 @@ def get_ref(obs_deque):
 
 
 def infer(model, ode_steps=11, max_steps=500, visualize_onscreen=False, execution_steps=8, save_video=False):
+    '''once experiment of RFMP on robomimic task
+
+    model: RFMP model
+    ode_steps: ODE solving steps during generation
+    max_steps: max roll-outs for Robomimic env
+    visualize_onscreen: whether visualize during test#
+    execution_steps: execution horizon
+    save_video: whether to save video of test process
+    '''
+
+    # initialize the Robomimic env
     env_meta = FileUtils.get_env_metadata_from_dataset(
         '/home/dia1rng/robomimic/datasets/' + cfg.task + '/ph/low_dim_v141.hdf5')
 
@@ -61,7 +72,7 @@ def infer(model, ode_steps=11, max_steps=500, visualize_onscreen=False, executio
     rotation_trajectory = [obs['robot0_eef_quat']]
     if save_video:
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # 设置编码格式为 mp4
-        out = cv2.VideoWriter('checkpoints/' + cfg.task + str(seed) + '.mp4', fourcc, 25.0, (512, 512))
+        out = cv2.VideoWriter(checkpoints_dir + '/' + cfg.task + 'seed_' + str(seed) + '_exc' + str(2) + '.mp4', fourcc, 25.0, (512, 512))
     while cur_step < max_steps and not done:
         # print('cur step ', cur_step)
         xref = get_ref(obs_deque)
@@ -88,12 +99,17 @@ def infer(model, ode_steps=11, max_steps=500, visualize_onscreen=False, executio
                 if save_video:
                     out.release()
                 return True, trans_trajectory, rotation_trajectory
+    if save_video:
+        out.release()
     return False, trans_trajectory, rotation_trajectory
 
 
 if __name__ == '__main__':
+    # load cfg for RFMP
     cfg = OmegaConf.load('refcond_rfm_robomimic.yaml')
     cfg.model_type = 'Unet'
+
+    # load config for robomimic environment
     config = config_factory(algo_name='bc')
     config.train.data = '/home/dia1rng/robomimic/datasets/' + cfg.task + '/ph/low_dim_v141.hdf5'
     config.train.batch_size = cfg.optim.batch_size
@@ -102,9 +118,9 @@ if __name__ == '__main__':
     config.train.hdf5_validation_filter_key = "valid"
     config.train.frame_stack = cfg.n_ref
     config.train.seq_length = cfg.n_pred
-    config.observation.modalities.obs.rgb = [
-        "sideview_image", 'robot0_eye_in_hand_image'
-    ]
+    # config.observation.modalities.obs.rgb = [
+    #     "sideview_image", 'robot0_eye_in_hand_image'
+    # ]
     config.observation.modalities.obs.low_dim = ["robot0_eef_pos",
                                                  "robot0_eef_quat",
                                                  "robot0_gripper_qpos"]
@@ -121,19 +137,9 @@ if __name__ == '__main__':
         max_steps = 500
 
     add_info = '_saveevery' + str(save_gap) + '_total' + str(save_gap * save_num)
-    add_info = '_OT'
-    # add_info = ''
     checkpoints_dir = "checkpoints/checkpoints_rfm_" + cfg.data + \
                       "_n" + str(cfg.n_pred) + "_r" + str(cfg.n_ref) + "_c" + str(cfg.n_cond) + "_w" + str(
         cfg.w_cond) + cfg.model_type + '_task_' + cfg.task + add_info
-    # best_checkpoint = glob(checkpoints_dir + "/**/epoch**.ckpt", recursive=True)[0]
-    # last_checkpoint = './' + checkpoints_dir + '/last.ckpt'
-    # model_checkpoint = './' + checkpoints_dir + '/model.ckpt'
-    # model = model.load_from_checkpoint(best_checkpoint, cfg=cfg)
-    # model.small_var = False
-    # model.to(torch.device('cuda'))
-    # 1, 2, 3, 5, 10
-
 
     for epoch in range(5, 1 + save_num):
         if not os.path.exists(checkpoints_dir + '/epoch' + str(save_gap * epoch - 1)):
@@ -148,12 +154,12 @@ if __name__ == '__main__':
                 save_gap * epoch - 1) + 'Unet' + cfg.task + '.ckpt'
         model = ManifoldFMRobomimicLitModule(cfg)
         model = model.load_from_checkpoint(cur_epoch_checkpoint, cfg=cfg)
-        model.small_var = True
+        model.small_var = False
         model.to(torch.device('cuda'))
         # save_folder = checkpoints_dir + '/epoch' + str(save_gap * epoch -1)
         # if not os.path.exists(save_folder):
         #     os.mkdir(save_folder)
-        for ode_steps in tqdm([1, 2, 3, 5]):
+        for ode_steps in tqdm([3]):
             save_folder = checkpoints_dir + '/epoch' + str(save_gap * epoch - 1) + '/ode' + str(ode_steps)
             if not os.path.exists(save_folder):
                 os.mkdir(save_folder)
@@ -162,13 +168,13 @@ if __name__ == '__main__':
                 np.random.seed(seed * 6)
                 torch.manual_seed(seed * 6)
                 success, trans_traj, rotation_traj = infer(model, visualize_onscreen=False, ode_steps=ode_steps, max_steps=max_steps, save_video=False)
-                np.save(save_folder + '/seed' + str(seed * 6) + '_trajtrans.npy', trans_traj)
-                np.save(save_folder + '/seed' + str(seed * 6) + '_trajrotate.npy', rotation_traj)
+                # np.save(save_folder + '/seed' + str(seed * 6) + '_trajtrans.npy', trans_traj)
+                # np.save(save_folder + '/seed' + str(seed * 6) + '_trajrotate.npy', rotation_traj)
                 if success:
                     total_success_times += 1
                     print('task ' + cfg.task + ' success at seed ' + str(seed * 6) + ' with ODE steps ' + str(ode_steps))
             print('success rate with ode steps ' + str(ode_steps) + ' ' + str(total_success_times / 50) + ' epoch' + str(epoch))
-            np.save(checkpoints_dir + '/epoch' + str(save_gap * epoch - 1) + '_ode' + str(ode_steps) + '.npy', total_success_times / 50)
+            # np.save(checkpoints_dir + '/epoch' + str(save_gap * epoch - 1) + '_ode' + str(ode_steps) + '.npy', total_success_times / 50)
 
     # for ode_steps in tqdm([3]):
     #     total_success_times = 0
