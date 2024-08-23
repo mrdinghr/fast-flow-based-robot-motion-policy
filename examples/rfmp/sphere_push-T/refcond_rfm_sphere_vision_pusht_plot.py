@@ -15,29 +15,43 @@ import matplotlib
 
 matplotlib.use('TkAgg')
 
-import sys
-
 from manifm.datasets import _get_dataset
 from manifm.model_trajectories_vision_resnet_pl import ManifoldVisionTrajectoriesResNetFMLitModule
 from diffusion_policy.env.pusht.pusht_image_env import PushTImageEnv
 
-sys.path.append('/home/dia1rng/safe_flow_motion_policy/flow-matching-policies/examples/datasets')
-from create_pusht_sphere_image_dataset import project_sphere_action_back, \
+from examples.datasets.create_pusht_sphere_image_dataset import project_sphere_action_back, \
     project_to_sphere_agent_pos, plt3d_sphere_project_img
 # from PIL import Image
 import cv2
 import torchvision.transforms as Transform
-from manifm.manifolds import Sphere
 
-# if torch.cuda.is_available():
-#     device = torch.cuda.current_device()
-# else:
-#     device = 'cpu'
+
+'''
+test RFMP on Sphere PushT task
+
+Note: change 'datadir' in 'refcond_rfm_sphere_vision_pusht.yaml' to where you save pusht dataset
+'''
+
+
 device = 'cpu'
 
 
-def inference(stats, model, obs_horizon, pred_horizon, action_horizon, seed=100000, ode_num=11, scale=1., crop=True,
+def inference(model, obs_horizon, pred_horizon, action_horizon, seed=100000, ode_num=11, scale=1., crop=True,
               max_steps=500):
+    '''
+    once experiment SRFMP on sphere pusht task
+
+    model: SRFMP model
+    obs_horizon: observation horizon
+    pred_horizon: prediction horizon
+    action_horizon: execution horizon
+    seed: seed to initialize PushT env
+    ode_num: ODE solving steps
+    scale: the ratio between euclidean pusht env edge and sphere to project
+    crop: whether to crop image
+    max_steps: maximum rollouts
+    '''
+
     # limit enviornment interaction to 200 steps before termination
     if not os.path.exists(checkpoints_dir + '/seed' + str(seed) + '/sp_img'):
         os.mkdir(checkpoints_dir + '/seed' + str(seed))
@@ -107,7 +121,7 @@ def inference(stats, model, obs_horizon, pred_horizon, action_horizon, seed=1000
                 # Flow matching action
                 ode_traj = model.sample_all(B, obs_cond.device, obs_cond,
                                             torch.zeros(B, 0, dtype=obs_cond.dtype, device=obs_cond.device),
-                                            different_sample=True, ode_num=ode_num,)
+                                            different_sample=True)
                 print('inference use '+ str(time.time() - start_time))
                 naction = ode_traj[-1][None][..., :model.dim * pred_horizon].squeeze().reshape(B, pred_horizon,
                                                                                                model.dim)
@@ -158,17 +172,16 @@ def inference(stats, model, obs_horizon, pred_horizon, action_horizon, seed=1000
         os.mkdir(checkpoints_dir + '/seed' + str(seed))
 
     # visualize
-    # vwrite(
-    #     checkpoints_dir + '/seed' + str(seed) + '/euclidean' + str(action_horizon) + 'seed' + str(seed) + '_ode' + str(
-    #         ode_num) + '_smallvar.mp4', imgs)
-    # Video(checkpoints_dir + '/seed' + str(seed) + '/euclidean' + str(action_horizon) + str(seed) + '_ode' + str(
-    #     ode_num) + '_smallvar.mp4',
-    #       embed=True,
-    #       width=256,
-    #       height=256)
+    vwrite(
+        checkpoints_dir + '/seed' + str(seed) + '/euclidean' + str(action_horizon) + 'seed' + str(seed) + '_ode' + str(
+            ode_num) + '_smallvar.mp4', imgs)
+    Video(checkpoints_dir + '/seed' + str(seed) + '/euclidean' + str(action_horizon) + str(seed) + '_ode' + str(
+        ode_num) + '_smallvar.mp4',
+          embed=True,
+          width=256,
+          height=256)
 
     make_video(checkpoints_dir + '/seed' + str(seed) + '/sp_img')
-
     return max(rewards)
 
 
@@ -198,18 +211,14 @@ def get_ordered_file_list(file_list):
 
 if __name__ == '__main__':
     # Load config
-    add_info = '_imgcrop_resnet_300epochtrain'
     cfg = OmegaConf.load('refcond_rfm_sphere_vision_pusht.yaml')
-    cfg.scale_std = 0.05
-    # checkpoints_dir = "checkpoints/checkpoints_rfm_" + cfg.data + "_" + cfg.letter[0] + "_n" + str(cfg.n_pred)
+
+    # specific info for loaded model
+    add_info = '_imgcrop_resnet'
     checkpoints_dir = "checkpoints/checkpoints_rfm_" + cfg.data + \
                       "_n" + str(cfg.n_pred) + "_r" + str(cfg.n_ref) + "_c" + str(cfg.n_cond) + "_w" + str(
         cfg.w_cond) + cfg.model_type + add_info
 
-    # make_video(checkpoints_dir + '/seed6/sp_img')
-    # Number of steps and actions per step
-    # n_actions = 1
-    # n_steps = int(200 / n_actions)
 
     # Load dataset
     dataset, _ = _get_dataset(cfg)
@@ -217,24 +226,18 @@ if __name__ == '__main__':
     # Construct model
     model = ManifoldVisionTrajectoriesResNetFMLitModule(cfg)
     # model = ManifoldVisionTrajectoriesResNetFMLitModule(cfg)
-    # print(model)
+    print(model)
     model.small_var = False
     best_checkpoint = glob(checkpoints_dir + "/**/epoch**.ckpt", recursive=True)[0]
     last_checkpoint = './' + checkpoints_dir + '/last.ckpt'
     model_checkpoint = './' + checkpoints_dir + '/model.ckpt'
-
     model = model.load_from_checkpoint(best_checkpoint, cfg=cfg)
     model.to(torch.device('cuda'))
-    # model.small_var = True
 
-    # Training data statistics (min, max) for each dim
-    stats = dataset.stats
-    # inference(stats, model, obs_horizon=cfg.n_ref, pred_horizon=cfg.n_pred, action_horizon=int(8),
-    #                   seed=66, ode_num=11, scale=1.5)
     reward_list = []
     max_steps = 500
     for seed in range(1, 51):
-        cur_reward = inference(stats, model, obs_horizon=cfg.n_ref, pred_horizon=cfg.n_pred, action_horizon=int(8),
+        cur_reward = inference(model, obs_horizon=cfg.n_ref, pred_horizon=cfg.n_pred, action_horizon=int(8),
                                seed=seed * 66, ode_num=11, scale=1.5, max_steps=max_steps)
         reward_list.append(cur_reward)
         np.save(checkpoints_dir + '/reward_list' + '' + '.npy', reward_list)

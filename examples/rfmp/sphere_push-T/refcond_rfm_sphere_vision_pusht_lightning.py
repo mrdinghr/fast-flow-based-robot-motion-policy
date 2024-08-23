@@ -6,21 +6,19 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks import LearningRateMonitor
 
-import sys
-sys.path.append('/home/dia1rng/safe_flow_motion_policy/flow-matching-policies/manifm')
-from model_trajectories_vision_resnet_pl import ManifoldVisionTrajectoriesResNetFMLitModule
-
 from manifm.datasets import get_loaders
 from manifm.model_trajectories_vision_pl import ManifoldVisionTrajectoriesFMLitModule
-import argparse
+
+
+'''
+Train RFMP for Sphere PushT task
+
+Note: change 'datadir' in 'refcond_rfm_sphere_vision_pusht.yaml' to where you save pusht dataset
+
+'''
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--model_type', default='tMLP', type=str)
-    args = parser.parse_args()
-
-    print('load args')
     # Load config
     cfg = OmegaConf.load('refcond_rfm_sphere_vision_pusht.yaml')
     cfg.model_type = 'Unet'
