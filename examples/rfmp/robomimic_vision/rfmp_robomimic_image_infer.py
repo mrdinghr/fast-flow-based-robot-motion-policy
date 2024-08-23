@@ -2,11 +2,9 @@ import os.path
 
 import numpy as np
 from omegaconf import OmegaConf
-import sys
 
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/manifm')
-from model_trajs_image_robomimic_pl import ManifoldFMImageRobomimicLitModule
-from glob import glob
+from manifm.model_trajs_image_robomimic_pl import ManifoldFMImageRobomimicLitModule
+
 import torch
 import robomimic.utils.env_utils as EnvUtils
 import robomimic.utils.file_utils as FileUtils
@@ -16,7 +14,6 @@ matplotlib.use('TkAgg')
 from robomimic.config import config_factory
 import robomimic.utils.obs_utils as ObsUtils
 
-from robomimic.utils.train_utils import run_rollout
 import matplotlib.pyplot as plt
 import time
 import collections
@@ -25,13 +22,23 @@ import cv2
 import torchvision.transforms as Transform
 
 
+'''
+script to test RFMP on Robomimic with vision-based observation
+'''
+
+
+# get observation condition vector
 def get_ref(obs_deque):
     if cfg.task == 'tool_hang':
         crop_transform = Transform.CenterCrop((216, 216))
     else:
         crop_transform = Transform.CenterCrop((76, 76))
-    pre_xref_img = obs_deque[0]['agentview_image']
-    cur_xre_img = obs_deque[1]['agentview_image']
+    if cfg.task == 'tool_hang':
+        pre_xref_img = obs_deque[0]['sideview_image']
+        cur_xre_img = obs_deque[1]['sideview_image']
+    else:
+        pre_xref_img = obs_deque[0]['agentview_image']
+        cur_xre_img = obs_deque[1]['agentview_image']
     pre_xref_img_scalar = model.image_to_features(
         crop_transform(torch.from_numpy(pre_xref_img).to(model.device).unsqueeze(0).unsqueeze(0)))
     cur_xref_img_scalar = model.image_to_features(
@@ -62,6 +69,16 @@ def get_ref(obs_deque):
 
 
 def infer(model, ode_steps=11, max_steps=500, visualize_onscreen=False, execution_steps=8, save_video=False):
+    ''' once experiment RFMP on Robomimic with vision-based observation
+
+        model: RFMP model
+        ode_steps: ODE solving steps during generation
+        max_steps: max roll-outs for Robomimic env
+        visualize_onscreen: whether visualize during test#
+        execution_steps: execution horizon
+        save_video: whether to save video of test process
+        '''
+    # initialize the Robomimic env
     env_meta = FileUtils.get_env_metadata_from_dataset(
         '/home/dia1rng/robomimic/datasets/' + cfg.task + '/ph/image_v141.hdf5')
 
@@ -73,7 +90,6 @@ def infer(model, ode_steps=11, max_steps=500, visualize_onscreen=False, executio
         use_image_obs=True,
     )
     obs = env.reset()
-    state_dict = env.get_state()
     cur_step = 0
     done = False
     obs_deque = collections.deque([obs] * cfg.n_ref, maxlen=cfg.n_ref)
@@ -96,7 +112,10 @@ def infer(model, ode_steps=11, max_steps=500, visualize_onscreen=False, executio
             # print('reward', reward)
             obs_deque.append(obs)
             cur_step += 1
-            img = env.render(mode="rgb_array", camera_name="agentview", height=512, width=512)
+            if cfg.task == 'tool_hang':
+                img = env.render(mode="rgb_array", camera_name="sideview", height=512, width=512)
+            else:
+                img = env.render(mode="rgb_array", camera_name="agentview", height=512, width=512)
             if visualize_onscreen:
                 if save_video:
                     out.write(img[:, :, ::-1])
@@ -113,8 +132,11 @@ def infer(model, ode_steps=11, max_steps=500, visualize_onscreen=False, executio
 
 
 if __name__ == '__main__':
+    # load cfg for RFMP
     cfg = OmegaConf.load('refcond_rfm_robomimic.yaml')
     cfg.model_type = 'Unet'
+
+    # config for Robomimic env
     config = config_factory(algo_name='bc')
     config.train.data = '/home/dia1rng/robomimic/datasets/' + cfg.task + '/ph/low_dim_v141.hdf5'
     config.train.batch_size = cfg.optim.batch_size
@@ -123,29 +145,36 @@ if __name__ == '__main__':
     config.train.hdf5_validation_filter_key = "valid"
     config.train.frame_stack = cfg.n_ref
     config.train.seq_length = cfg.n_pred
-    config.observation.modalities.obs.rgb = [
-        "agentview_image", 'robot0_eye_in_hand_image'
-    ]
+    if cfg.task == 'tool_hang':
+        config.observation.modalities.obs.rgb = ["sideview_image",
+                                                 "robot0_eye_in_hand_image"]
+    else:
+        config.observation.modalities.obs.rgb = [
+            "agentview_image", "robot0_eye_in_hand_image"
+        ]
     config.observation.modalities.obs.low_dim = ["robot0_eef_pos",
                                                  "robot0_eef_quat",
                                                  "robot0_gripper_qpos"]
     ObsUtils.initialize_obs_utils_with_config(config)
     model = ManifoldFMImageRobomimicLitModule(cfg)
-    save_gap = 20
+
+    # set the checkpoints
+    save_gap = 40
     save_num = 5
+    if cfg.task == 'tool_hang':
+        max_steps = 700
+        save_gap = 40
+    elif cfg.task == 'lift':
+        max_steps = 300
+    else:
+        max_steps = 500
     add_info = '_imgobs_saveevery' + str(save_gap) + '_total' + str(int(save_gap * save_num))
     checkpoints_dir = "checkpoints/checkpoints_rfm_" + cfg.data + \
                       "_n" + str(cfg.n_pred) + "_r" + str(cfg.n_ref) + "_c" + str(cfg.n_cond) + "_w" + str(
         cfg.w_cond) + cfg.model_type + '_task_' + cfg.task + add_info
-    # best_checkpoint = glob(checkpoints_dir + "/**/epoch**.ckpt", recursive=True)[0]
-    # last_checkpoint = './' + checkpoints_dir + '/last.ckpt'
-    # model_checkpoint = './' + checkpoints_dir + '/model.ckpt'
-    # model = model.load_from_checkpoint(best_checkpoint, cfg=cfg)
-    # model.small_var = False
-    # model.to(torch.device('cuda'))
-    # 1, 2, 3, 5, 10
 
-    for epoch in range(1, 1 + save_num):
+    # test with different checkpoints, seeds and ODE steps
+    for epoch in range(5, 1 + save_num):
         if not os.path.exists(checkpoints_dir + '/epoch' + str(save_gap * epoch - 1)):
             os.mkdir(checkpoints_dir + '/epoch' + str(save_gap * epoch - 1))
         if save_gap * epoch - 1 < 10:
@@ -159,12 +188,12 @@ if __name__ == '__main__':
                 save_gap * epoch - 1) + 'Unet' + cfg.task + '.ckpt'
         model = ManifoldFMImageRobomimicLitModule(cfg)
         model = model.load_from_checkpoint(cur_epoch_checkpoint, cfg=cfg)
-        model.small_var = False
+        model.small_var = True
         model.to(torch.device('cuda'))
         # save_folder = checkpoints_dir + '/epoch' + str(save_gap * epoch -1)
         # if not os.path.exists(save_folder):
         #     os.mkdir(save_folder)
-        for ode_steps in tqdm([3]):
+        for ode_steps in tqdm([1, 2, 3, 5, 10]):
             save_folder = checkpoints_dir + '/epoch' + str(save_gap * epoch - 1) + '/ode' + str(ode_steps)
             if not os.path.exists(save_folder):
                 os.mkdir(save_folder)
@@ -173,7 +202,7 @@ if __name__ == '__main__':
                 np.random.seed(seed * 6)
                 torch.manual_seed(seed * 6)
                 success, trans_traj, rotation_traj = infer(model, visualize_onscreen=False, ode_steps=ode_steps,
-                                                           max_steps=500, save_video=False)
+                                                           max_steps=max_steps, save_video=False)
                 np.save(save_folder + '/seed' + str(seed * 6) + '_trajtrans.npy', trans_traj)
                 np.save(save_folder + '/seed' + str(seed * 6) + '_trajrotate.npy', rotation_traj)
                 if success:

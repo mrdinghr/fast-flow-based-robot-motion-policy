@@ -6,15 +6,13 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks import LearningRateMonitor
 
-# import robomimic
+from data.robomimic.get_image_dataloadar import get_robomimic_image_dataloadar
+from manifm.model_trajs_image_robomimic_pl import ManifoldFMImageRobomimicLitModule
 
-import argparse
-import wandb
-import sys
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/data/robomimic')
-from get_image_dataloadar import get_robomimic_image_dataloadar
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/manifm')
-from model_trajs_image_robomimic_pl import ManifoldFMImageRobomimicLitModule
+
+'''
+training script for RFMP on Robomimic with vision-based observation
+'''
 
 
 if __name__ == '__main__':
