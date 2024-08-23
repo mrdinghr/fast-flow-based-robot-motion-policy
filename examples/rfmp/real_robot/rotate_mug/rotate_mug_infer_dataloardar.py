@@ -1,17 +1,11 @@
-import sys
-
 import matplotlib.pyplot as plt
 
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/manifm')
-from model_trajectories_rotate_mug import ManifoldStateTrajectoriesMugRotateFMLitModule
-from model_trajectories_vision_resnet_dishgrasp_pl import ManifoldVisionTrajectoriesResNetDishGraspFMLitModule
-from model_trajs_vision_rotate_mug_pl import ManifoldVisionTrajectoriesMugRotateFMLitModule
+from manifm.model_trajs_vision_rotate_mug_pl import ManifoldVisionTrajectoriesMugRotateFMLitModule
 
 from omegaconf import OmegaConf
 from glob import glob
 
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/data/real_robot')
-from vision_audio_robot_arm import get_loaders
+from data.real_robot.vision_audio_robot_arm import get_loaders
 from types import SimpleNamespace
 import time
 from tqdm import tqdm
@@ -23,7 +17,18 @@ import matplotlib
 matplotlib.use('TkAgg')
 
 
+'''
+Test RFMP replay on Rotate Mug recorded dataset
+'''
+
+
 def compare_demo_gen(batch, action):
+    '''
+    compare the generated trajectories with recorded trajectories
+
+    batch: from data loadar, the recorded demonstration
+    action: the generated trajecctory by RFMP
+    '''
     demo_pos_quat = batch['future_pos_quat'][0]
     demo_grip_pos = batch['future_gripper'][0]
     gen_pos_quat = action[:, :7]
@@ -38,6 +43,7 @@ def compare_demo_gen(batch, action):
 
 
 def infer_whole_traj(data_loadar, model, execute_horizon=8, save_video=False, no_crop=True, guided_flow=False):
+
     gen_state_list = []
     demo_state_list = []
     demo_grip_list = []
@@ -110,6 +116,7 @@ def infer_whole_traj(data_loadar, model, execute_horizon=8, save_video=False, no
 
 
 if __name__ == '__main__':
+    # load cfg
     cfg = OmegaConf.load('refcond_rfm_rotate_mug.yaml')
     cfg.model_type = 'Unet'
     data_folder = cfg.data_dir
@@ -136,9 +143,8 @@ if __name__ == '__main__':
     checkpoints_dir = "checkpoints/checkpoints_rfm_" + cfg.data + \
                       "_n" + str(cfg.n_pred) + "_r" + str(cfg.n_ref) + "_c" + str(cfg.n_cond) + "_w" + str(
         cfg.w_cond) + cfg.model_type + add_info
-    # model = ManifoldVisionTrajectoriesResNetDishGraspFMLitModule(cfg)
+
     model = ManifoldVisionTrajectoriesMugRotateFMLitModule(cfg)
-    # model = ManifoldVisionTrajectoriesDishGraspFMLitModule(cfg)
 
     best_checkpoint = glob(checkpoints_dir + "/**/epoch**.ckpt", recursive=True)[0]
     last_checkpoint = './' + checkpoints_dir + '/last.ckpt'

@@ -11,11 +11,16 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 import sys
 sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/manifm')
 from model_trajectories_rotate_mug import ManifoldStateTrajectoriesMugRotateFMLitModule
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/data/real_robot')
 from dummy_robot_arm1 import get_loaders
 from types import SimpleNamespace
 
 import argparse
+
+
+'''
+RFMP Rotate Mug training script, with state-based observation
+this is just used for simple test, not used in paper
+'''
 
 
 if __name__ == '__main__':

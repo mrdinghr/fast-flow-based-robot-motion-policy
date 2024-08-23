@@ -8,18 +8,19 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks import LearningRateMonitor
 
-import sys
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/manifm')
-from model_trajs_vision_rotate_mug_pl import ManifoldVisionTrajectoriesMugRotateFMLitModule
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/data/real_robot')
-from vision_audio_robot_arm import get_loaders
+from manifm.model_trajs_vision_rotate_mug_pl import ManifoldVisionTrajectoriesMugRotateFMLitModule
+from data.real_robot.vision_audio_robot_arm import get_loaders
 from types import SimpleNamespace
 
 import argparse
 
 
+'''
+RFMP Rotate Mug training script, with over-the-shoulder camera as observation
+'''
+
+
 if __name__ == '__main__':
-    # the name of dataset: dish_grasp
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_type', default='tMLP', type=str)
     args = parser.parse_args()
