@@ -1,4 +1,5 @@
 """Copyright (c) Meta Platforms, Inc. and affiliates."""
+import time
 
 import torch
 import torch.nn.functional as F
@@ -17,10 +18,29 @@ from manifm.manifolds import (
     PoincareBall,
 )
 from manifm.manifolds import geodesic
-from manifm.solvers import projx_integrator_return_last, projx_integrator
+from manifm.solvers import projx_integrator_return_last, projx_integrator, fast_projx_integrator_robot_data
 from manifm.model_pl import div_fn, output_and_div, ManifoldFMLitModule
 from manifm.vision.resnet_models import get_resnet, replace_bn_with_gn
 from manifm.model.uNet import Unet
+
+
+'''
+this class is for real robot experiment Pick Place with vision encoder in backbone
+
+functions
+vecfield: learned conditional vector field
+sample_all: generate action series from observation condition vector
+normalize_pos_quat: normalize position during training
+denormalize_pos_quat: denormalize position during testing
+normalize_grip: normalize gripper state during training
+denormalize_grip: denormalize gripper state during testing
+unpack_predictions_reference_conditioning_samples: get target samples, observation condition, prior samples from dataset
+image_to_features: vision encoder for image of over-the-shoulder camera
+grip_image_to_features: vision encoder for image of in-hand camera
+rm_loss_fn: loss function
+configure_optimizers: configure optimizer
+optimizer_step: step of optimizer
+'''
 
 
 class ManifoldVisionTrajectoriesResNetDishGraspFMLitModule(ManifoldFMLitModule):
@@ -57,8 +77,7 @@ class ManifoldVisionTrajectoriesResNetDishGraspFMLitModule(ManifoldFMLitModule):
         self.model_type = cfg.model_type
         # Redefined the model of the vector field.
         if cfg.model_type == 'Unet':
-            self.model = EMA(
-                Unbatch(  # Ensures vmap works.
+            self.model = Unbatch(  # Ensures vmap works.
                     ProjectToTangent(  # Ensures we can just use Euclidean divergence.
                         Unet(input_dim=self.dim,
                              global_cond_dim=self.n_ref * self.vision_feature_dim + \
@@ -70,22 +89,7 @@ class ManifoldVisionTrajectoriesResNetDishGraspFMLitModule(ManifoldFMLitModule):
                         metric_normalize=self.cfg.model.get("metric_normalize", False),
                         dim=self.output_dim  # As the last dims of x are the conditioning variable
                     )
-                ),
-                cfg.optim.ema_decay,
-            )
-        elif cfg.model_type == 'Unet_noema':
-            self.model = Unbatch(  # Ensures vmap works.
-                ProjectToTangent(  # Ensures we can just use Euclidean divergence.
-                    Unet(input_dim=self.dim,
-                         global_cond_dim=self.n_ref * self.vision_feature_dim + \
-                                         self.n_cond * self.vision_feature_dim + add_dim,
-                         # down_dims=[256, 512, 1024]),
-                         down_dims=[128, 256, 512]),
-                    manifold=self.manifold,
-                    metric_normalize=self.cfg.model.get("metric_normalize", False),
-                    dim=self.output_dim  # As the last dims of x are the conditioning variable
                 )
-            )
         else:
             self.model = EMA(
                 Unbatch(  # Ensures vmap works.
@@ -129,84 +133,23 @@ class ManifoldVisionTrajectoriesResNetDishGraspFMLitModule(ManifoldFMLitModule):
         self.pos_quat_min = torch.tensor([0.2, -0.1, 0., -1., -1., -1., -1.]).to(self.device)
         self.normalize = cfg.normalize_pos_quat
 
-
     @property
     def vecfield(self):
         return self.model
 
     @torch.no_grad()
-    def compute_cost(self, batch):
-        if isinstance(batch, dict):
-            x0 = batch["x0"]
-        else:
-            x0 = (
-                self.manifold.random_base(batch.shape[0], self.output_dim)
-                .reshape(batch.shape[0], self.output_dim)
-                .to(batch.device)
-            )
-
-        x1, xref, xcond, _ = self.unpack_predictions_reference_conditioning_samples(batch)
-
-        # Wrapper for conditioning
-        wrapper_vecfield = self.wrapper_red_cond(self.vecfield, xref, xcond)
-
-        # Solve ODE.
-        x1 = odeint(
-            wrapper_vecfield,
-            x0,
-            t=torch.linspace(0, 1, 2).to(x0.device),
-            atol=self.cfg.model.atol,
-            rtol=self.cfg.model.rtol,
-        )[-1]
-
-        x1 = self.manifold.projx(x1)
-
-        return self.manifold.dist(x0, x1)
-
-    @torch.no_grad()
-    def sample(self, n_samples, device, xref, xcond, x0=None):
-        if x0 is None:
-            # Sample from base distribution.
-            x0 = (
-                self.manifold.random_base(n_samples, self.output_dim)
-                .reshape(n_samples, self.output_dim)
-                .to(device)
-            )
-
-        local_coords = self.cfg.get("local_coords", False)
-        eval_projx = self.cfg.get("eval_projx", False)
-
-        # Wrapper for conditioning
-        wrapper_vecfield = self.wrapper_red_cond(self.vecfield, xref, xcond)
-
-        # Solve ODE.
-        if not eval_projx and not local_coords:
-            # If no projection, use adaptive step solver.
-            x1 = odeint(
-                wrapper_vecfield,
-                x0,
-                t=torch.linspace(0, 1, 2).to(device),
-                atol=self.cfg.model.atol,
-                rtol=self.cfg.model.rtol,
-                options={"min_step": 1e-5}
-            )[-1]
-        else:
-            # If projection, use 1000 steps.
-            x1 = projx_integrator_return_last(
-                self.manifold,
-                wrapper_vecfield,
-                x0,
-                t=torch.linspace(0, 1, 1001).to(device),
-                method="euler",
-                projx=eval_projx,
-                local_coords=local_coords,
-                pbar=True,
-            )
-        # x1 = self.manifold.projx(x1)
-        return x1
-
-    @torch.no_grad()
     def sample_all(self, n_samples, device, xref, xcond=None, x0=None, different_sample=False, ode_steps=11):
+        '''
+        used for testing, generating action series from observation conditio vector
+
+        n_samples: number of generation action series
+        device: cuda, cpu
+        xref: observation condition vector
+        xcond: actually not used anymore
+        x0: prior samples
+        different_sample: for each dimension of x0 whether same or not
+        ode_steps: ODE solving steps
+        '''
         if self.small_var and x0 is not None:
             x0 = x0.reshape((n_samples, self.cfg.n_pred, self.dim))
             x0[:, :, 0:3] *= 0.05
@@ -214,19 +157,18 @@ class ManifoldVisionTrajectoriesResNetDishGraspFMLitModule(ManifoldFMLitModule):
             x0 = x0.reshape((n_samples, self.cfg.n_pred * self.dim))
         if x0 is None:
             # Sample from base distribution.
+            cur_time = time.time()
             sample = self.manifold.random_base(n_samples, self.output_dim, different_sample=different_sample)
             sample = sample.reshape((n_samples, self.cfg.n_pred, self.dim))
             if self.small_var:
                 sample[:, :, 0:3] *= 0.05
                 sample[:, :, -1] *= 0.05
                 sample = sample.reshape((n_samples, self.cfg.n_pred * self.dim))
-            # x0 = (
-            #     self.manifold.random_base(n_samples, self.output_dim, different_sample=different_sample)
-            #     .reshape(n_samples, self.output_dim)
-            #     .to(device)
-            # )
             x0 = (sample.reshape((n_samples, self.output_dim)).to(device))
-
+            print('x0 sample uses ', time.time() - cur_time)
+            # cur_time = time.time()
+            # test_x0 = torch.randn(x0.shape).to(self.device)
+            # print('test x0 sample uses ', time.time() - cur_time)
         if self.model_type == 'Unet' or self.model_type == 'Unet_noema':
             if xcond is not None:
                 if self.cfg.model_type == 'Unet':
@@ -240,16 +182,18 @@ class ManifoldVisionTrajectoriesResNetDishGraspFMLitModule(ManifoldFMLitModule):
                     self.model.model.vecfield.vecfield.unet.global_cond = xref
                 elif self.cfg.model_type == 'Unet_noema':
                     self.model.vecfield.vecfield.unet.global_cond = xref
-            xs, _ = projx_integrator(
-                self.manifold,
-                self.vecfield,
-                x0,
-                t=torch.linspace(0, 1, ode_steps).to(device),
-                method="euler",
-                projx=True,
-                pbar=False,
-                local_coords=False
-            )
+
+            xs = fast_projx_integrator_robot_data(self.vecfield, x0, ode_steps)
+            # xs, _ = projx_integrator(
+            #     self.manifold,
+            #     self.vecfield,
+            #     x0,
+            #     t=torch.linspace(0, 1, ode_steps + 1).to(device),
+            #     method="euler",
+            #     projx=False,
+            #     pbar=False,
+            #     local_coords=True
+            # )
         else:
             # Wrapper for conditioning
             wrapper_vecfield = self.wrapper_red_cond(self.vecfield, xref, xcond)
@@ -265,116 +209,6 @@ class ManifoldVisionTrajectoriesResNetDishGraspFMLitModule(ManifoldFMLitModule):
                 pbar=True,
             )
         return xs
-
-    @torch.no_grad()
-    def compute_exact_loglikelihood(
-            self,
-            batch: torch.Tensor,
-            t1: float = 1.0,
-            return_projx_error: bool = False,
-            num_steps=1000,
-    ):
-        """Computes the negative log-likelihood of a batch of data."""
-
-        # try:
-        nfe = [0]
-
-        div_mode = self.cfg.get("div_mode", "exact")
-
-        with torch.inference_mode(mode=False):
-            xbatch, xref, xcond, _ = self.unpack_predictions_reference_conditioning_samples(batch)
-            wrapper_vecfield = self.wrapper_red_cond(self.vecfield, xref, xcond)
-
-            v = None
-            if div_mode == "rademacher":
-                v = torch.randint(low=0, high=2, size=batch.shape).to(batch) * 2 - 1
-                v = v[..., :self.output_dim]
-
-            def odefunc(t, tensor):
-                nfe[0] += 1
-                t = t.to(tensor)
-                x = tensor[..., : self.output_dim]
-
-                vecfield = lambda x: wrapper_vecfield(t, x)
-                dx, div = output_and_div(vecfield, x, v=v, div_mode=div_mode)
-
-                if hasattr(self.manifold, "logdetG"):
-                    def _jvp(x, v):
-                        return jvp(self.manifold.logdetG, (x,), (v,))[1]
-
-                    corr = vmap(_jvp)(x, dx)
-                    div = div + 0.5 * corr.to(div)
-
-                div = div.reshape(-1, 1)
-                del t, x
-                return torch.cat([dx, div], dim=-1)
-
-            # Solve ODE on the product manifold of data manifold x euclidean.
-            product_man = ProductManifold(
-                (self.manifold, self.output_dim), (Euclidean(), 1)
-            )
-            # state1 = torch.cat([batch, torch.zeros_like(batch[..., :1])], dim=-1)
-            state1 = torch.cat([xbatch, torch.zeros_like(xbatch[..., :1])], dim=-1)
-
-            local_coords = self.cfg.get("local_coords", False)
-            eval_projx = self.cfg.get("eval_projx", False)
-
-            with torch.no_grad():
-                if not eval_projx and not local_coords:
-                    # If no projection, use adaptive step solver.
-                    state0 = odeint(
-                        odefunc,
-                        state1,
-                        t=torch.linspace(t1, 0, 2).to(batch),
-                        atol=self.cfg.model.atol,
-                        rtol=self.cfg.model.rtol,
-                        method="dopri5",
-                        options={"min_step": 1e-5},
-                    )[-1]
-                else:
-                    # If projection, use 1000 steps.
-                    state0 = projx_integrator_return_last(
-                        product_man,
-                        odefunc,
-                        state1,
-                        t=torch.linspace(t1, 0, num_steps + 1).to(batch),
-                        method="euler",
-                        projx=eval_projx,
-                        local_coords=local_coords,
-                        pbar=True,
-                    )
-
-            # log number of function evaluations
-            self.log("nfe", nfe[0], prog_bar=True, logger=True)
-
-            x0, logdetjac = state0[..., : self.output_dim], state0[..., -1]
-            x0_ = x0
-            x0 = self.manifold.projx(x0)
-
-            # log how close the final solution is to the manifold.
-            integ_error = (x0[..., : self.output_dim] - x0_[..., : self.output_dim]).abs().max()
-            self.log("integ_error", integ_error)
-
-            logp0 = self.manifold.base_logprob(x0)
-            logp1 = logp0 + logdetjac
-
-            if self.cfg.get("normalize_loglik", False):
-                logp1 = logp1 / self.output_dim
-
-            # Mask out those that left the manifold
-            masked_logp1 = logp1
-            if isinstance(self.manifold, SPD):
-                mask = integ_error < 1e-5
-                self.log("frac_within_manifold", mask.sum() / mask.nelement())
-                masked_logp1 = logp1[mask]
-
-            if return_projx_error:
-                return logp1, integ_error
-            else:
-                return masked_logp1
-        # except:
-        #     traceback.print_exc()
-        #     return torch.zeros(batch.shape[0]).to(batch)
 
     def normalize_pos_quat(self, pos_quat):
         return 2 * (pos_quat - self.pos_quat_min.to(self.device)) / (
@@ -470,6 +304,7 @@ class ManifoldVisionTrajectoriesResNetDishGraspFMLitModule(ManifoldFMLitModule):
         x_t = x_t.reshape(N, self.output_dim)
         u_t = u_t.reshape(N, self.output_dim)
 
+        # set observation condition vector
         if self.model_type == 'Unet' or self.model_type == 'Unet_noema':
             if xcond is not None:
                 if self.cfg.model_type == 'Unet':

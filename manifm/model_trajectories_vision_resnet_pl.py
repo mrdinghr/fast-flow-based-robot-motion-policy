@@ -27,6 +27,10 @@ from torchcfm.optimal_transport import OTPlanSampler
 
 
 class ManifoldVisionTrajectoriesFMLitModule(ManifoldFMLitModule):
+    '''
+    base class for trajectory prediction with vision encoder in backbone
+    For task Euclidean Push-T and Sphere Push-T
+    '''
     def __init__(self, cfg):
         super().__init__(cfg)
 

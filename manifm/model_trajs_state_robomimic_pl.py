@@ -14,6 +14,18 @@ from manifm.model.uNet import Unet
 from torchcfm.optimal_transport import OTPlanSampler
 
 
+'''
+Robomimic task with state based observation
+
+functions
+vecfield: learned vector field
+sample_all: generate action series from observation condition vector
+unpack_predictions_reference_conditioning_samples: get observation condition vector, prior samples and target samples 
+                                                    from dataset
+rfm_loss_fn: loss function
+'''
+
+
 class ManifoldFMRobomimicLitModule(ManifoldFMLitModule):
     def __init__(self, cfg):
         super().__init__(cfg)
@@ -27,6 +39,7 @@ class ManifoldFMRobomimicLitModule(ManifoldFMLitModule):
         else:
             add_dim = 0
 
+        # different dimension of state observation for different task
         if cfg.task == 'can':
             self.ref_object_feature = 14
         elif cfg.task == 'lift':
@@ -165,17 +178,9 @@ class ManifoldFMRobomimicLitModule(ManifoldFMLitModule):
 
         t = torch.rand(N).reshape(-1, 1).to(x1)
 
-        def cond_u(x0, x1, t):
-            path = geodesic(self.manifold, x0, x1)
-            x_t, u_t = jvp(path, (t,), (torch.ones_like(t).to(t),))
-            return x_t, u_t
-
+        # conditional vector field as Rectified flow on euclidean space
         x_t = x1 + (1 - t) * (x0 - x1)
         u_t = x1 - x0
-
-        # x_t, u_t = vmap(cond_u)(x0, x1, t)
-        # x_t = x_t.reshape(N, self.output_dim)
-        # u_t = u_t.reshape(N, self.output_dim)
 
         if self.model_type == 'Unet':
             self.model.model.vecfield.vecfield.unet.global_cond = xref

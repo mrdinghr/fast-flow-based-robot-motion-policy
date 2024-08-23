@@ -8,20 +8,26 @@ from torchdiffeq import odeint
 
 from manifm.ema import EMA
 from manifm.model.arch import tMLP, ProjectToTangent, Unbatch
-from manifm.manifolds import (
-    Sphere,
-    FlatTorus,
-    Euclidean,
-    ProductManifold,
-    Mesh,
-    SPD,
-    PoincareBall,
-)
+
 from manifm.manifolds import geodesic
 from manifm.solvers import projx_integrator_return_last, projx_integrator, projx_integrator_guided
 from manifm.model_pl import div_fn, output_and_div, ManifoldFMLitModule
 from manifm.vision.resnet_models import get_resnet, replace_bn_with_gn
 from manifm.model.uNet import Unet
+
+
+'''
+Training class for RFMP on Rotate Mug with vision-observation 
+
+function
+vecfield: learned vector field
+sample_all: generate action series with observation condition vector xref
+normalize_pos_quat, normalize_grip: normalization during training
+denormalize_pos_quat, denormalize_grip: denormalization during testing
+image_to_features: vision encoder for image of over-the-shoulder camera
+unpack_predictions_reference_conditioning_samples: get osbervation condition vector xref, prior samples x1, target samples x1
+rfm_loss_fn: loss function
+'''
 
 
 class ManifoldVisionTrajectoriesMugRotateFMLitModule(ManifoldFMLitModule):
@@ -159,6 +165,7 @@ class ManifoldVisionTrajectoriesMugRotateFMLitModule(ManifoldFMLitModule):
                     local_coords=True,
                 )
             else:
+                # guided flow is to manually reset the first action to observation during ODE solving, not used anymore
                 xs, _ = projx_integrator_guided(
                     self.manifold,
                     self.vecfield,
@@ -205,7 +212,7 @@ class ManifoldVisionTrajectoriesMugRotateFMLitModule(ManifoldFMLitModule):
         image_feaeture = image_feaeture.reshape(*x.shape[:2], -1)
         return image_feaeture.flatten(start_dim=1)
 
-    # todo this function is used for removing batch that robto doesnt move
+    # todo this function is used for removing batch that robot doesnt move
     def check_batch_no_move(self, batch):
         pos_quat_actions = batch['traj']['target_pos_quat']['action'].to(self.device)
         move_distance = pos_quat_actions - pos_quat_actions[:, 0:1, :]

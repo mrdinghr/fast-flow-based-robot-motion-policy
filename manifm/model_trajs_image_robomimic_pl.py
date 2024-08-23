@@ -14,6 +14,21 @@ from manifm.model.uNet import Unet
 from manifm.vision.resnet_models import get_resnet, replace_bn_with_gn
 import torchvision.transforms as Transform
 
+'''
+Robomimimc task with vision observation, 2 camera: over-the-shoulder camera and in-hand camera
+
+functions
+vecfield: learned vector field
+sample_all: generate action series from observation condition vector
+unpack_predictions_reference_conditioning_samples: get observation condition vector, prior samples and target samples 
+                                                    from dataset
+image_to_features: vision encoder of over-the-shoulder camera
+grip_image_to_features: vision encoder of in-hand camera
+rfm_loss_fn: loss function
+configure_optimizers: configure optimizer
+optimizer_step: update learned parameters
+'''
+
 
 class ManifoldFMImageRobomimicLitModule(ManifoldFMLitModule):
     def __init__(self, cfg):
@@ -30,6 +45,7 @@ class ManifoldFMImageRobomimicLitModule(ManifoldFMLitModule):
             add_dim = 0
 
         self.img_feature_dim = 512
+        # img_feature for 2 cameras, 3 for transition, 4 for quarternion, 2 for gripper
         self.feature_dim = self.img_feature_dim * 2 + 3 + 4 + 2
         self.output_dim = self.dim * self.n_pred
         self.input_dim = self.output_dim + \
@@ -70,7 +86,7 @@ class ManifoldFMImageRobomimicLitModule(ManifoldFMLitModule):
                 cfg.optim.ema_decay,
             )
 
-        # Vision model
+        # Vision Encoder for over-the-shoulder camera and in-hand camera
         self.vision_encoder = get_resnet('resnet18')
         self.vision_encoder = replace_bn_with_gn(self.vision_encoder)
 
@@ -79,8 +95,19 @@ class ManifoldFMImageRobomimicLitModule(ManifoldFMLitModule):
         self.nets = EMA(torch.nn.ModuleDict({'vision_encoder': self.vision_encoder, 'vf_net': self.model,
                                              'grip_vision_encoder': self.grip_vision_encoder}))
 
+        # check the parameters number of learned vector field and vision encoder
+        print("number of parameters of VF model: {:e}".format(
+            sum(p.numel() for p in self.model.parameters()))
+        )
+
+        print("number of parameters of Resnet model: {:e}".format(
+            sum(p.numel() for p in self.vision_encoder.parameters()))
+        )
+
         self.cfg = cfg
         self.small_var = False
+
+        # duriing training random crop the image
         if cfg.task == 'tool_hang':
             self.crop_transform = Transform.RandomCrop((216, 216))
         else:
@@ -92,6 +119,18 @@ class ManifoldFMImageRobomimicLitModule(ManifoldFMLitModule):
 
     @torch.no_grad()
     def sample_all(self, n_samples, device, xref, x0=None, different_sample=True, ode_steps=10):
+        '''
+        generate action series from observation condition vector xref
+
+        n_samples: number of generated action series
+        device: cuda, cpu
+        xref: observation condition vector
+        x0: prior samples
+        different_sample: whether the prior sample is same at each dimension
+        ode_steps: ODE solving steps
+
+        return: generated action series
+        '''
         if x0 is None:
             # Sample from base distribution.
             x0 = (
@@ -132,7 +171,10 @@ class ManifoldFMImageRobomimicLitModule(ManifoldFMLitModule):
         B = batch['actions'].shape[0]
         x1 = batch['actions'][:, self.cfg.n_ref - 1:, :].reshape((B, 7 * self.n_pred)).to(
             self.device)  # shape B * n_pred * 7
-        xref_image = batch['obs']['agentview_image'][:, :self.cfg.n_ref, :]
+        if self.task == 'tool_hang':
+            xref_image = batch['obs']['sideview_image'][:, :self.cfg.n_ref, :]
+        else:
+            xref_image = batch['obs']['agentview_image'][:, :self.cfg.n_ref, :]
         xref_image = xref_image.moveaxis(-1, -3).float()
         xref_image_scalar = self.image_to_features(xref_image)  # shape B * n_ref * 14
         xref_robo_pos = batch['obs']['robot0_eef_pos'][:, :self.cfg.n_ref, :]
@@ -175,17 +217,9 @@ class ManifoldFMImageRobomimicLitModule(ManifoldFMLitModule):
 
         t = torch.rand(N).reshape(-1, 1).to(x1)
 
-        def cond_u(x0, x1, t):
-            path = geodesic(self.manifold, x0, x1)
-            x_t, u_t = jvp(path, (t,), (torch.ones_like(t).to(t),))
-            return x_t, u_t
-
+        # conditional vector field as Rectified flow on Euclidean space
         x_t = x1 + (1 - t) * (x0 - x1)
         u_t = x1 - x0
-
-        # x_t, u_t = vmap(cond_u)(x0, x1, t)
-        # x_t = x_t.reshape(N, self.output_dim)
-        # u_t = u_t.reshape(N, self.output_dim)
 
         if self.model_type == 'Unet':
             self.model.vecfield.vecfield.unet.global_cond = xref

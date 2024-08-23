@@ -1,4 +1,5 @@
 """Copyright (c) Meta Platforms, Inc. and affiliates."""
+import time
 
 import torch
 import torch.nn.functional as F
@@ -23,6 +24,13 @@ from manifm.vision.resnet_models import get_resnet, replace_bn_with_gn
 from manifm.model.uNet import Unet
 
 
+'''
+class for RFMP PickPlace real robot tasks
+without vision encoder in training backbone
+Note: this is not used anymore
+'''
+
+
 class ManifoldVisionTrajectoriesDishGraspFMLitModule(ManifoldFMLitModule):
     def __init__(self, cfg):
         super().__init__(cfg)
@@ -36,7 +44,7 @@ class ManifoldVisionTrajectoriesDishGraspFMLitModule(ManifoldFMLitModule):
         else:
             add_dim = 0
 
-        # Vision model
+        # Vision encoder for over-the-shoulder camera
         self.vision_encoder = get_resnet('resnet18')
         self.vision_encoder = replace_bn_with_gn(self.vision_encoder)
 
@@ -179,17 +187,14 @@ class ManifoldVisionTrajectoriesDishGraspFMLitModule(ManifoldFMLitModule):
             x0 = x0.reshape((n_samples, self.cfg.n_pred * self.dim))
         if x0 is None:
             # Sample from base distribution.
+            cur_time = time.time()
             sample = self.manifold.random_base(n_samples, self.output_dim, different_sample=different_sample)
             sample = sample.reshape((n_samples, self.cfg.n_pred, self.dim))
             if self.small_var:
                 sample[:, :, 0:3] *= 0.05
                 sample[:, :, -1] *= 0.05
                 sample = sample.reshape((n_samples, self.cfg.n_pred * self.dim))
-            # x0 = (
-            #     self.manifold.random_base(n_samples, self.output_dim, different_sample=different_sample)
-            #     .reshape(n_samples, self.output_dim)
-            #     .to(device)
-            # )
+            print('sample x0 use time ', time.time() - cur_time)
             x0 = (sample.reshape((n_samples, self.output_dim)).to(device))
 
         if self.model_type == 'Unet':
@@ -204,7 +209,7 @@ class ManifoldVisionTrajectoriesDishGraspFMLitModule(ManifoldFMLitModule):
                 t=torch.linspace(0, 1, ode_steps).to(device),
                 method="euler",
                 projx=True,
-                pbar=True,
+                pbar=False,
             )
         else:
             # Wrapper for conditioning
@@ -334,7 +339,6 @@ class ManifoldVisionTrajectoriesDishGraspFMLitModule(ManifoldFMLitModule):
 
     def unpack_predictions_reference_conditioning_samples(self, batch: torch.Tensor):
         # Unpack batch vector into different components
-        # Assumes greyscale images
         B = batch['observation']['v_fix'].shape[0]
 
         x1_pos_quat = batch['future_pos_quat']
@@ -394,6 +398,7 @@ class ManifoldVisionTrajectoriesDishGraspFMLitModule(ManifoldFMLitModule):
         x_t = x_t.reshape(N, self.output_dim)
         u_t = u_t.reshape(N, self.output_dim)
 
+        # set the observation and time condition vector
         if self.model_type == 'Unet':
             if xcond is not None:
                 self.model.model.vecfield.vecfield.unet.global_cond = torch.hstack((xref, xcond))
