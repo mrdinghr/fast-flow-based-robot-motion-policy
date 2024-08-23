@@ -7,18 +7,21 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks import LearningRateMonitor
 
 from manifm.datasets import get_loaders
-from manifm.model_trajectories_vision_pl import ManifoldVisionTrajectoriesFMLitModule
 from manifm.model_trajectories_vision_resnet_pl import ManifoldVisionTrajectoriesResNetFMLitModule
 import argparse
-import wandb
+
+
+'''
+Train RFMP on euclidean PushT task
+
+Note when observation horizon = 2, set 'data' in refcond_rfm_euclidean_vision_pusht.yaml to 'pusht_vision_ref_cond'
+else when observation horizon > 2, set 'data' in refcond_rfm_euclidean_vision_pusht.yaml to 'pusht_vision_ref_cond_band'
+
+change the 'datadir' to where you save the PushT dataset 
+'''
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--model_type', default='tMLP', type=str)
-    args = parser.parse_args()
-
-    print('load args')
     # Load config
     cfg = OmegaConf.load('refcond_rfm_euclidean_vision_pusht.yaml')
     cfg.model_type = 'Unet'
