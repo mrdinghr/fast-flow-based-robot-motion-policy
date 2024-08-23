@@ -12,6 +12,14 @@ from stable_manifolds_learntau import geodesic, projx_integrator
 from stable_unet import StableUnetLearnTauStepEncoder
 from stable_model_trajs_pl_learntau import SRFMTrajsModuleLearnTau
 
+'''
+SRFMP robomimic with state observation
+
+vecfield: learned vector field
+sample_all: generate action series from observation condition vector xref
+unpack_predictions_reference_conditioning_samples: get xref, prior sample x0, target sample x1 from training dataset
+'''
+
 
 class SRFMRobomimicLTModule(SRFMTrajsModuleLearnTau):
     def __init__(self, cfg):
@@ -25,6 +33,7 @@ class SRFMRobomimicLTModule(SRFMTrajsModuleLearnTau):
         else:
             add_dim = 0
 
+        # different dimension of observed agent state
         if cfg.task == 'can':
             self.ref_object_feature = 14
         elif cfg.task == 'lift':
@@ -151,8 +160,6 @@ class SRFMRobomimicLTModule(SRFMTrajsModuleLearnTau):
         if torch.any(tau == 1):
             one_id, _ = torch.where(tau == 1)
             tau[one_id] -= 0.02
-        # z0 = torch.hstack([x0, tau])
-        # z1 = torch.hstack([x1, tau1.repeat(N)])
         t = -torch.log((tau - tau1) / (tau0 - tau1)) / self.lambda_tau
 
         def cond_u(x0, x1, t):
@@ -160,12 +167,13 @@ class SRFMRobomimicLTModule(SRFMTrajsModuleLearnTau):
             x_t, ux_t = jvp(path, (t,), (torch.ones_like(t).to(t),))
             return x_t, ux_t
 
+        # conditional vector field for SRFM: 2 part, x vector field and tau vector field
         # here ux_t is the derivative of x flow to tau
         x_t, ux_t = vmap(cond_u)(x0, x1, t)
         x_t = x_t.reshape(N, self.output_dim)
         ux_t = ux_t.reshape(N, self.output_dim)
         tau_t = tau
-        utau_t = - self.lambda_tau * (tau_t - tau1)
+        utau_t = -self.lambda_tau * (tau_t - tau1)
         z_t = torch.hstack([x_t, tau_t])
         uz_t = torch.hstack([ux_t, utau_t])
 

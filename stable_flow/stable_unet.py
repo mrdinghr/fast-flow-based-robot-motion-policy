@@ -17,6 +17,11 @@ from typing import Union
 import math
 
 
+'''
+Network used for SRFMP
+'''
+
+
 class SinusoidalPosEmb(nn.Module):
     def __init__(self, dim):
         super().__init__()

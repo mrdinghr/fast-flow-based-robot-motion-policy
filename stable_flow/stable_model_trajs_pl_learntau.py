@@ -17,6 +17,15 @@ from torchmetrics import MeanMetric, MinMetric
 from manifm.manifolds import Euclidean, ProductManifoldTrajectories
 
 
+'''
+SRFMP learning tau vector field
+
+vecfield: learned vector field
+sample_all: generate action series from observation condition vector xref
+unpack_predictions_reference_conditioning_samples: get xref, prior sample x0, target x1 from training dataset
+'''
+
+
 class SRFMTrajsModuleLearnTau(pl.LightningModule):
     def __init__(self, cfg):
         super().__init__()
@@ -73,7 +82,6 @@ class SRFMTrajsModuleLearnTau(pl.LightningModule):
     def vecfield(self):
         return self.model
 
-    # todo rewwrite the stable_manifolds_learntau
     @torch.no_grad()
     def sample_all(self, n_samples, device, xref, xcond, z0=None):
         if z0 is None:
@@ -88,13 +96,11 @@ class SRFMTrajsModuleLearnTau(pl.LightningModule):
                 .reshape(n_samples, self.output_dim)
                 .to(device)
             )
+            tau0 = torch.zeros((n_samples, 1)).to(device)
+            z0 = torch.hstack([x0, tau0])
             if self.small_var:
                 print('small var')
                 z0[..., :-1] *= 0.05
-            # if self.previous_x0 is not None and shift_mean:
-            #     x0 = self.previous_x0 + x0 * 0.05
-            #     print(x0[0])
-            #     print(self.previous_x0[0])
 
         if self.model_type == 'Unet':
             self.model.model.vecfield.vecfield.unet.global_cond = torch.hstack((xref, xcond))
@@ -183,6 +189,7 @@ class SRFMTrajsModuleLearnTau(pl.LightningModule):
             return x_t, ux_t
 
         # here ux_t is the derivative of x flow to tau
+        # conditional vector field of SRFM, 2 part: x vector field and tau vector field
         x_t, ux_t = vmap(cond_u)(x0, x1, t)
         x_t = x_t.reshape(N, self.output_dim)
         ux_t = ux_t.reshape(N, self.output_dim)
@@ -191,6 +198,7 @@ class SRFMTrajsModuleLearnTau(pl.LightningModule):
         z_t = torch.hstack([x_t, tau_t])
         uz_t = torch.hstack([ux_t, utau_t])
 
+        # set observation condition vector
         if self.model_type == 'Unet':
             self.model.model.vecfield.vecfield.unet.global_cond = torch.hstack((xref, xcond))
             diff = self.vecfield(z_t) - uz_t

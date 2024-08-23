@@ -14,6 +14,19 @@ from stable_unet import StableUnetLearnTauNew, StableUnetLearnTau, StableUnetLea
 from stable_model_trajs_pl_learntau import SRFMTrajsModuleLearnTau
 
 
+'''
+SRFMP real robot Rotate Mug
+
+vecfield: learned vector field
+sample_all: generate action series from observation condition vector xref
+unpack_predictions_reference_conditioning_samples: get xref, prior sample x0, target sample x1 from training dataset
+image_to_features: over-the-shoulder camera vision encoder
+grip_image_to_features: in-hand camera vision encoder
+normalize_pos_quat, normalize_grip: normalize state during training
+denormalize_pos_quat, denormalize_grip: denormalize action during testing
+'''
+
+
 class SRFMRotateMugVisionResnetTrajsModuleLearnTau(SRFMTrajsModuleLearnTau):
     def __init__(self, cfg):
         super().__init__(cfg)
@@ -237,8 +250,7 @@ class SRFMRotateMugVisionResnetTrajsModuleLearnTau(SRFMTrajsModuleLearnTau):
         if torch.any(tau == 1):
             one_id, _ = torch.where(tau == 1)
             tau[one_id] -= 0.02
-        # z0 = torch.hstack([x0, tau])
-        # z1 = torch.hstack([x1, tau1.repeat(N)])
+
         t = -torch.log((tau - tau1) / (tau0 - tau1)) / self.lambda_tau
 
         def cond_u(x0, x1, t):
@@ -246,6 +258,7 @@ class SRFMRotateMugVisionResnetTrajsModuleLearnTau(SRFMTrajsModuleLearnTau):
             x_t, ux_t = jvp(path, (t,), (torch.ones_like(t).to(t),))
             return x_t, ux_t
 
+        # conditional vector field for SRFM: 2 part, x vector field and tau vector field
         # here ux_t is the derivative of x flow to tau
         x_t, ux_t = vmap(cond_u)(x0, x1, t)
         x_t = x_t.reshape(N, self.output_dim)

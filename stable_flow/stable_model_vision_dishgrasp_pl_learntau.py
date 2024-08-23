@@ -1,4 +1,5 @@
 """Copyright (c) Meta Platforms, Inc. and affiliates."""
+import time
 
 import torch
 
@@ -8,10 +9,23 @@ from typing import Any, List
 from manifm.ema import EMA
 from manifm.model.arch import tMLP, ProjectToTangent, Unbatch
 
-from stable_manifolds_learntau import geodesic, projx_integrator
+from stable_manifolds_learntau import geodesic, projx_integrator, fast_projx_integrator_robot_data
 from manifm.vision.resnet_models import get_resnet, replace_bn_with_gn
 from stable_unet import StableUnetLearnTauNew, StableUnetLearnTau, StableUnetLearnTauStepEncoder
 from stable_model_trajs_pl_learntau import SRFMTrajsModuleLearnTau
+
+
+'''
+SRFMP real robot Pick Place task
+
+vecfield: learned vector field
+sample_all: generate action series from observation condition vector xref
+unpack_predictions_reference_conditioning_samples: get xref, prior sample x0, target sample x1 from training dataset
+image_to_features: over-the-shoulder camera vision encoder
+grip_image_to_features: in-hand camera vision encoder
+normalize_pos_quat, normalize_grip: normalize state during training
+denormalize_pos_quat, denormalize_grip: denormalize action during testing
+'''
 
 
 class SRFMVisionResnetTrajsModuleLearnTau(SRFMTrajsModuleLearnTau):
@@ -101,6 +115,7 @@ class SRFMVisionResnetTrajsModuleLearnTau(SRFMTrajsModuleLearnTau):
     def sample_all(self, n_samples, device, xref, xcond=None, z0=None, different_sample=True, adp=False, ode_steps=10):
         if z0 is None:
             # Sample from base distribution.
+            cur_time = time.time()
             sample = self.manifold.random_base(n_samples, self.output_dim, different_sample=different_sample)
             sample = sample.reshape((n_samples, self.cfg.n_pred, self.dim))
             if self.small_var:
@@ -110,20 +125,22 @@ class SRFMVisionResnetTrajsModuleLearnTau(SRFMTrajsModuleLearnTau):
             x0 = (sample.reshape((n_samples, self.output_dim)).to(device))
             tau0 = torch.zeros((n_samples, 1)).to(self.device)
             z0 = torch.hstack([x0, tau0])
+            print('sample z0 uses ', time.time() - cur_time)
         if self.model_type == 'Unet':
             self.model.vecfield.vecfield.unet.global_cond = xref
-            zs, _ = projx_integrator(
-                manifold=self.z_manifold,
-                odefunc=self.vecfield,
-                z0=z0,
-                lambda_tau=self.lambda_tau,
-                ode_steps=ode_steps,
-                method="euler",
-                projx=True,
-                pbar=False,
-                adap_step=adp,
-                local_coords=False
-            )
+            zs = fast_projx_integrator_robot_data(self.vecfield, z0, self.lambda_x, odesteps=ode_steps)
+            # zs, _ = projx_integrator(
+            #     manifold=self.z_manifold,
+            #     odefunc=self.vecfield,
+            #     z0=z0,
+            #     lambda_tau=self.lambda_tau,
+            #     ode_steps=ode_steps,
+            #     method="euler",
+            #     projx=False,
+            #     pbar=False,
+            #     adap_step=adp,
+            #     local_coords=True
+            # )
             # midpoint euler
         elif self.model_type == 'tMLP':
             assert False, 'model type not right'

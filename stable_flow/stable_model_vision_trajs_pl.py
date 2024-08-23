@@ -13,6 +13,11 @@ from manifm.model.uNet import Unet
 from stable_model_trajs_pl import SRFMTrajsModule
 
 
+'''
+not used anymore
+'''
+
+
 class SRFMVisionTrajsModule(SRFMTrajsModule):
     def __init__(self, cfg):
         super().__init__(cfg)

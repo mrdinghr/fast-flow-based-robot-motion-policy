@@ -1,4 +1,5 @@
 '''compute the stable RFM flow '''
+import time
 
 import torch
 from tqdm import tqdm
@@ -38,7 +39,7 @@ def new_geodesic(manifold, start_point, end_point, lamda_x):
 '''integration of stable riemannian flow'''
 @torch.no_grad()
 def projx_integrator(
-    manifold, odefunc, z0, lambda_tau, ode_steps=10, method="euler", projx=True, local_coords=False, pbar=False, adap_step=False
+    manifold, odefunc, z0, lambda_x, ode_steps=10, method="euler", projx=True, local_coords=False, pbar=False, adap_step=False
 ):
     T = 1.5
     tau1 = 1
@@ -48,16 +49,9 @@ def projx_integrator(
 
     z_ts = [z0]
     vz_ts = []
-    # dt = T / ode_steps
-    # dt = 0.05  # for ode step 100
-    # dt = 0.07  # best dt
-    # dt = 0.25  # best for srfm ode 5 lambda 2.5
-    # # dt = 0.12
-    k_step = 1 - 0.0005 ** (1 / ode_steps)
-    dt = k_step / lambda_tau
-    dt = 1 / lambda_tau
-
-    # dt = 1 / lambda_tau
+    # k_step = 1 - 0.0005 ** (1 / ode_steps)
+    # dt = k_step / lambda_tau
+    dt = 1 / lambda_x
 
     if pbar:
         rangelist = tqdm(range(ode_steps))
@@ -67,38 +61,21 @@ def projx_integrator(
     cur_z = z0
     for i in rangelist:
         tau = cur_z[..., -1]
+        cur_time = time.time()
         vz_t = odefunc(tau, cur_z)
-        # vz_t[..., -1] = -lambda_tau * (tau - tau1)
-
-        # if not adap_step:
-        #     xt = step_fn(
-        #         odefunc, xt, vt, t0, dt, manifold=manifold if local_coords else None
-        #     )
-        # else:
-        #     # k_dt = K_ADAP_STEP_PARAM1 * torch.exp(-K_ADAP_STEP_PARAM2 * t0)
-        #     k_dt = 2 - t0 / T
-        #     xt = step_fn(xt, vt, dt * k_dt, manifold=manifold if local_coords else None)
-
+        # print('vector field ', time.time() - cur_time)
         if not adap_step:
+            cur_time = time.time()
             cur_z = step_fn(
                 odefunc, cur_z, vz_t, dt, manifold=manifold if local_coords else None
             )
+            # print('exp map uses time ', time.time() - cur_time)
             dt = 0.02
-            # if i > ode_steps / 2:
-            #     dt = 1 / (lambda_tau * ode_steps)
         else:
-            cur_dt = dt * torch.exp(-0.5 / lambda_tau * abs(tau1 - tau))
+            cur_dt = dt * torch.exp(-0.5 / lambda_x * abs(tau1 - tau))
             cur_z = step_fn(
                 odefunc, cur_z, vz_t, cur_dt, manifold=manifold if local_coords else None
             )
-            # if tau < 0.95:
-            #     cur_z = step_fn(
-            #         odefunc, cur_z, vz_t, dt, manifold=manifold if local_coords else None
-            #     )
-            # else:
-            #     cur_z = step_fn(
-            #         odefunc, cur_z, vz_t, dt * 0.1, manifold=manifold if local_coords else None
-            #     )
 
         if projx:
             cur_z = manifold.projx(cur_z)
@@ -145,11 +122,6 @@ def rk_projx_integrator(
             k_dt = 1.5 - t0 / T
             xt = step_fn(xt, vt, dt * k_dt, manifold=manifold if local_coords else None)
 
-        # if t0 < T / 3:
-        #     xt = step_fn(xt, vt, dt * 1.3, manifold=manifold if local_coords else None)
-        # else:
-        #     xt = step_fn(xt, vt, dt * 0.9, manifold=manifold if local_coords else None)
-
         if projx:
             xt = manifold.projx(xt)
         vts.append(vt)
@@ -157,9 +129,48 @@ def rk_projx_integrator(
     return torch.stack(xts), torch.stack(vts)
 
 
+# euler method for ODE solving
 def euler_step(odefunc, xt, vt, dt, manifold=None):
     if manifold is not None:
         return manifold.expmap(xt, dt * vt)
     else:
         return xt + dt * vt
+
+
+# integration on learned stable vector field with own writen exp map
+# but attention: this is only for Real Robot data with prediction horizon 16
+def fast_projx_integrator_robot_data(odefunc, z0, lamda_x, odesteps):
+    dt = 1 / lamda_x
+    cur_z = z0
+    cur_x = z0[:, :-1]
+    cur_tau = z0[:, -1:]
+    for i in range(odesteps):
+        tau = cur_z[..., -1]
+        cur_time = time.time()
+        vz_t = odefunc(tau, cur_z)
+        print('vector field time ', time.time() - cur_time)
+        cur_time = time.time()
+        vx_t = vz_t[:, :-1]
+        vtau_t = vz_t[:, -1:]
+        cur_x = fast_exp_map(cur_x, vx_t * dt)
+        cur_tau += vtau_t * dt
+        cur_z = torch.hstack((cur_x, cur_tau))
+        dt = 0.02
+        print('exp map uses ', time.time() - cur_time)
+    return cur_z
+
+
+# own writen code of exp map for Real Robot data manifold
+# only for product manifold [Euclidean(3), Sphere(4), Euclidean(1)] * 16
+def fast_exp_map(x, u):
+    x = x.reshape((16, 8))
+    u = u.reshape((16, 8))
+    x_quat = x[:, 3:7]
+    u_quat = u[:, 3:7]
+    norm_u_quat = u_quat.norm(dim=-1).unsqueeze(dim=-1)
+    exp = x_quat * torch.cos(norm_u_quat) + u_quat * torch.sin(norm_u_quat) / norm_u_quat
+    x[:, 3:7] = exp
+    x[:, :3] += u[:, :3]
+    x[:, -1] += u[:, -1]
+    return x.reshape((1, 128))
 

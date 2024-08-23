@@ -14,6 +14,15 @@ from stable_model_trajs_pl_learntau import SRFMTrajsModuleLearnTau
 from torchcfm.optimal_transport import OTPlanSampler
 
 
+'''
+SRFMP model for euclidean and sphere PsuhT 
+
+vecfield: learned vector field
+sample_all: generate action series from observation condition vector xref
+unpack_predictions_reference_conditioning_samples: get xref, prior sample x0, target sample x1 from training dataset
+'''
+
+
 class SRFMVisionResnetTrajsModuleLearnTau(SRFMTrajsModuleLearnTau):
     def __init__(self, cfg):
         super().__init__(cfg)
@@ -192,59 +201,6 @@ class SRFMVisionResnetTrajsModuleLearnTau(SRFMTrajsModuleLearnTau):
             x_image = x.reshape((-1, self.image_dim, self.image_dim)).unsqueeze(-3).repeat(1, 3, 1, 1)
             return self.vision_encoder(x_image).reshape(batch, -1)
 
-    def new_unpack_predictions_reference_conditioning_samples(self, batch: torch.Tensor):
-        # Unpack batch vector into different components
-        # Assumes greyscale images
-        if (self.cfg.data == 'pusht_vision_ref_cond' or self.cfg.data == 'pusht_sphere_vision_ref_cond' or
-                self.cfg.data == 'pusht_vision_ref_cond_band' or self.cfg.data == 'pusht_sphere_vision_ref_cond_euc'):
-            B = batch['action'].shape[0]
-            x1 = batch['action'].reshape((B, self.n_pred * self.dim))
-            x0 = self.manifold.random_base(x1.shape[0], self.output_dim).to(x1)
-            xref_pos = batch['obs']['agent_pos']
-            # xref_pos = xref_pos.reshape((B, (self.n_ref + self.n_cond) * self.dim))
-            xref_image = batch['obs']['image']
-            xref_image_scalar = self.new_image_to_features(xref_image)
-            if 'band' in self.cfg.data:
-                xcond_dist = batch['obs']['cond_dist']
-                xref = torch.hstack([xref_image_scalar, xref_pos, xcond_dist], dim=-1)
-            else:
-                xref = torch.cat([xref_image_scalar, xref_pos], dim=-1)
-            xref = xref.flatten(start_dim=1)
-            if self.small_var:
-                x0 *= 0.05
-            return x1, xref, None, x0
-
-        else:
-            if isinstance(batch, dict):
-                x0 = batch["x0"]
-                x1 = batch["x1"]
-                xref = batch["xref"]
-                xcond = batch["xcond"]
-            else:
-                x1 = batch[..., :self.output_dim]
-                xref = batch[..., self.output_dim:self.output_dim + self.n_ref * self.image_dim ** 2]
-                xcond = batch[..., self.output_dim + self.n_ref * self.image_dim ** 2:self.output_dim + (
-                        self.n_ref + self.n_cond) * self.image_dim ** 2 + 1]
-                x0 = self.manifold.random_base(x1.shape[0], self.output_dim).to(x1)
-
-            # Transform images into feature vectors
-            xcond_scalar = xcond[..., -1][:, None]
-            xref_feature = self.image_to_features(xref)
-            xcond_feature = self.image_to_features(xcond[..., :-1])
-            xcond_feature_scalar = torch.hstack((xcond_feature, xcond_scalar))
-
-        return x1, xref_feature, xcond_feature_scalar, x0
-
-    def new_image_to_features(self, x):
-        if self.cfg.data == 'pusht_vision_ref_cond' or self.cfg.data == 'pusht_sphere_vision_ref_cond' or self.cfg.data == 'pusht_vision_ref_cond_band'  or self.cfg.data == 'pusht_sphere_vision_ref_cond_euc':
-            image_feaeture = self.vision_encoder(x.flatten(end_dim=1).float())
-            image_feaeture = image_feaeture.reshape(*x.shape[:2], -1)
-            return image_feaeture
-        else:
-            batch = x.shape[0]
-            x_image = x.reshape((-1, self.image_dim, self.image_dim)).unsqueeze(-3).repeat(1, 3, 1, 1)
-            return self.vision_encoder(x_image).reshape(batch, -1)
-
     class wrapper_red_cond(torch.nn.Module):
         """Wraps model to torchdyn compatible format."""
 
@@ -258,7 +214,7 @@ class SRFMVisionResnetTrajsModuleLearnTau(SRFMTrajsModuleLearnTau):
             return self.vecfield(t, torch.hstack((x, self.ref, self.cond)))
 
     def rfm_loss_fn(self, batch: torch.Tensor):
-        x1, xref, xcond, x0 = self.new_unpack_predictions_reference_conditioning_samples(batch)
+        x1, xref, xcond, x0 = self.unpack_predictions_reference_conditioning_samples(batch)
 
         if self.optimal_transport:
             x0, x1 = self.ot_sampler.sample_plan(x0, x1)

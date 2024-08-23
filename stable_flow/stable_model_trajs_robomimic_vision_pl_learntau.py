@@ -15,6 +15,17 @@ from manifm.vision.resnet_models import get_resnet, replace_bn_with_gn
 import torchvision.transforms as Transform
 
 
+'''
+SRFMP Robomimic with vision observation
+
+vecfield: learned vector field
+sample_all: generate action series from observation condition vector xref
+unpack_predictions_reference_conditioning_samples: get xref, prior sample x0, target sample x1 from training dataset
+image_to_features: over-the-shoulder camera vision encoder
+grip_image_to_features: in-hand camera vision encoder
+'''
+
+
 class SRFMRobomimicVisionLTModule(SRFMTrajsModuleLearnTau):
     def __init__(self, cfg):
         super().__init__(cfg)
@@ -51,13 +62,22 @@ class SRFMRobomimicVisionLTModule(SRFMTrajsModuleLearnTau):
         else:
             assert False, 'network type wrongly set'
 
+        # vision encoder for over-the-shoulder camear
         self.vision_encoder = get_resnet('resnet18')
         self.vision_encoder = replace_bn_with_gn(self.vision_encoder)
 
+        # vision encoder for in-hand camera
         self.grip_vision_encoder = get_resnet('resnet18')
         self.grip_vision_encoder = replace_bn_with_gn(self.grip_vision_encoder)
         self.nets = EMA(torch.nn.ModuleDict({'vision_encoder': self.vision_encoder, 'vf_net': self.model,
                                              'grip_vision_encoder': self.grip_vision_encoder}), cfg.optim.ema_decay)
+        print("number of parameters of VF model: {:e}".format(
+            sum(p.numel() for p in self.model.parameters()))
+        )
+
+        print("number of parameters of Resnet model: {:e}".format(
+            sum(p.numel() for p in self.vision_encoder.parameters()))
+        )
 
         self.cfg = cfg
         self.small_var = False
@@ -89,7 +109,7 @@ class SRFMRobomimicVisionLTModule(SRFMTrajsModuleLearnTau):
                 manifold=self.z_manifold,
                 odefunc=self.vecfield,
                 z0=z0,
-                lambda_tau=self.lambda_tau,
+                lambda_x=self.lambda_x,
                 ode_steps=ode_steps,
                 method="euler",
                 projx=True,
@@ -121,7 +141,10 @@ class SRFMRobomimicVisionLTModule(SRFMTrajsModuleLearnTau):
         B = batch['actions'].shape[0]
         x1 = batch['actions'][:, self.cfg.n_ref - 1:, :].reshape((B, 7 * self.n_pred)).to(
             self.device)  # shape B * n_pred * 7
-        xref_image = batch['obs']['agentview_image'][:, :self.cfg.n_ref, :]
+        if self.task == 'tool_hang':
+            xref_image = batch['obs']['sideview_image'][:, :self.cfg.n_ref, :]
+        else:
+            xref_image = batch['obs']['agentview_image'][:, :self.cfg.n_ref, :]
         xref_image = xref_image.moveaxis(-1, -3).float()
         xref_image_scalar = self.image_to_features(xref_image)  # shape B * n_ref * 14
         xref_robo_pos = batch['obs']['robot0_eef_pos'][:, :self.cfg.n_ref, :]
@@ -177,6 +200,7 @@ class SRFMRobomimicVisionLTModule(SRFMTrajsModuleLearnTau):
             x_t, ux_t = jvp(path, (t,), (torch.ones_like(t).to(t),))
             return x_t, ux_t
 
+        # conditional vector field for SRFM: 2 part, x vector field and tau vector field
         # here ux_t is the derivative of x flow to tau
         x_t, ux_t = vmap(cond_u)(x0, x1, t)
         x_t = x_t.reshape(N, self.output_dim)

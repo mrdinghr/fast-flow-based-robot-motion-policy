@@ -3,7 +3,6 @@
 from typing import Any, List
 
 import torch
-import torch.nn.functional as F
 import pytorch_lightning as pl
 from torch.func import vjp, jvp, vmap, jacrev
 
@@ -14,6 +13,12 @@ from stable_unet import StableUnet
 from manifm.datasets import get_manifold
 from stable_manifolds import geodesic, projx_integrator
 from torchmetrics import MeanMetric, MinMetric
+
+
+'''
+base class for stable riemannian flow matching without learning tau vector field
+Note: this is not used anymore
+'''
 
 
 class SRFMTrajsModule(pl.LightningModule):

@@ -13,6 +13,19 @@ from manifm.model.uNet import Unet
 from stable_model_trajs_pl import SRFMTrajsModule
 
 
+'''
+SRFMP with vision encoder in training backbone
+task: Euclidean & Sphere Push-T
+
+function
+vecfield: learned vector field
+sample_all: generate action series from observatio condition vector xref
+unpack_predictions_reference_conditioning_samples: get prior sample x0, target sample x1, observation condition vector xref from training data
+image_to_features: vision encoder
+rfm_loss_fn: loss function
+'''
+
+
 class SRFMVisionResnetTrajsModule(SRFMTrajsModule):
     def __init__(self, cfg):
         super().__init__(cfg)
@@ -30,7 +43,7 @@ class SRFMVisionResnetTrajsModule(SRFMTrajsModule):
         self.vision_encoder = get_resnet('resnet18')
         self.vision_encoder = replace_bn_with_gn(self.vision_encoder)
 
-        # Dimensions
+        # Observation Condition Vector Dimensions
         self.image_dim = cfg.image_dim
         if self.cfg.data == 'pusht_vision_ref_cond' or self.cfg.data == 'pusht_vision_ref_cond_band':
             self.vision_feature_dim = 512 + 2  # ResNet18 output 1536; 4 pos dim
@@ -211,6 +224,7 @@ class SRFMVisionResnetTrajsModule(SRFMTrajsModule):
         x_t = x_t.reshape(N, self.output_dim)
         u_t = u_t.reshape(N, self.output_dim)
 
+        #set the observation condition vector
         if self.model_type == 'Unet':
             if xcond is not None:
                 self.model.vecfield.vecfield.unet.global_cond = torch.hstack((xref, xcond))
