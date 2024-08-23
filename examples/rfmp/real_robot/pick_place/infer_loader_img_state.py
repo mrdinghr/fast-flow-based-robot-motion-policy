@@ -30,7 +30,17 @@ def compare_demo_gen(batch, action):
     plt.show()
 
 
-def infer_whole_traj(data_loadar, model, execute_horizon=8, save_video=False, no_crop=True, ode_steps=11):
+def infer_whole_traj(data_loadar, model, execute_horizon=8, save_video=False, ode_steps=11):
+    '''
+    data_loadar:  train or validation dataloadar to get info
+    model: RFMP model
+    execution_horizon: the number of executed action after every prediction
+    save_video: whether to save the video of the whole process
+    ode-steps: the number od ODE solving process
+
+    return plot of generate trajectory compared with recorded trajectory from data loadar
+    '''
+
     gen_state_list = []
     demo_state_list = []
     demo_grip_list = []
@@ -47,7 +57,7 @@ def infer_whole_traj(data_loadar, model, execute_horizon=8, save_video=False, no
             _, xref, xcond, _ = model.unpack_predictions_reference_conditioning_samples(batch)
             start_time = time.time()
             actions = model.sample_all(1, model.device, xref=xref, xcond=xcond, different_sample=True, ode_steps=ode_steps)
-            actions = actions[-1].reshape((cfg.n_pred, model.dim))
+            actions = actions.reshape((cfg.n_pred, model.dim))
             if cfg.normalize_pos_quat:
                 actions[..., :-1] = model.denormalize_pos_quat(actions[..., :-1])
                 actions[..., -1] = model.denormalize_grip(actions[..., -1])
@@ -98,7 +108,10 @@ def infer_whole_traj(data_loadar, model, execute_horizon=8, save_video=False, no
 
 
 if __name__ == '__main__':
+    # load cfg fOR RFMP
     cfg = OmegaConf.load('refcond_rfm_euclidean_dish_grasp.yaml')
+
+    # setting of data loadar
     data_folder = cfg.data_dir
     data_args = SimpleNamespace()
     data_args.ablation = 'vf_vg'
@@ -119,14 +132,17 @@ if __name__ == '__main__':
     checkpoints_dir = "checkpoints/checkpoints_rfm_" + cfg.data + \
                       "_n" + str(cfg.n_pred) + "_r" + str(cfg.n_ref) + "_c" + str(cfg.n_cond) + "_w" + str(
         cfg.w_cond) + cfg.model_type + add_info
+
+    # construct model
     model = ManifoldVisionTrajectoriesResNetDishGraspFMLitModule(cfg)
     # model = ManifoldVisionTrajectoriesDishGraspFMLitModule(cfg)
 
     best_checkpoint = glob(checkpoints_dir + "/**/epoch**.ckpt", recursive=True)[0]
     last_checkpoint = './' + checkpoints_dir + '/last.ckpt'
     model_checkpoint = './' + checkpoints_dir + '/model.ckpt'
+    # load model from checkpoints
     model = model.load_from_checkpoint(best_checkpoint, cfg=cfg)
-    print(model)
+    # print(model)
     model.small_var = True
     model.to(torch.device('cuda'))
-    infer_whole_traj(val_loader, model, execute_horizon=8, save_video=False, ode_steps=4)
+    infer_whole_traj(val_loader, model, execute_horizon=8, save_video=False, ode_steps=10)

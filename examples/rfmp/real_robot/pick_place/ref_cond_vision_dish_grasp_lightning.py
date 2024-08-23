@@ -8,15 +8,18 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks import LearningRateMonitor
 
-import sys
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/manifm')
-from model_trajectories_vision_dishgrasp_pl import ManifoldVisionTrajectoriesDishGraspFMLitModule
-from model_trajectories_vision_resnet_dishgrasp_pl import ManifoldVisionTrajectoriesResNetDishGraspFMLitModule
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/data/real_robot')
+from manifm.model_trajectories_vision_resnet_dishgrasp_pl import ManifoldVisionTrajectoriesResNetDishGraspFMLitModule
 from dummy_robot_arm1 import get_loaders
 from types import SimpleNamespace
 
 import argparse
+
+
+'''
+Training script of RFMP on Pick & Place real robot task
+
+Note: change 'data_dir' in 'refcond_rfm_euclidean_dish_grasp.yaml' to where you save the recorded demonstrations
+'''
 
 
 if __name__ == '__main__':
@@ -49,6 +52,7 @@ if __name__ == '__main__':
     # Construct model
     model = ManifoldVisionTrajectoriesResNetDishGraspFMLitModule(cfg)
     print(model)
+    # specific info for current training
     add_info = '_tttt'
     # Checkpointing, logging, and other misc.
     checkpoints_dir = "checkpoints/checkpoints_rfm_" + cfg.data + \

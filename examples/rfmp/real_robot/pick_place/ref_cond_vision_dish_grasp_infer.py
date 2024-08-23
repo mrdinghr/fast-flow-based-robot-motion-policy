@@ -1,15 +1,12 @@
 import os.path
-import sys
 
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/manifm')
-from model_trajectories_vision_resnet_dishgrasp_pl import ManifoldVisionTrajectoriesResNetDishGraspFMLitModule
+from manifm.model_trajectories_vision_resnet_dishgrasp_pl import ManifoldVisionTrajectoriesResNetDishGraspFMLitModule
 from omegaconf import OmegaConf
 from glob import glob
-from tami_clap_candidate.utils.circle_motion_vectorfield import get_converging_vector, get_tangent_vector
 from tami_clap_candidate.rpc_interface.rpc_interface import RPCInterface
 from tami_clap_candidate.sensors.realsense import Preset, RealsenseRecorder
 import time
-import cv2
+
 import torchvision.transforms as T
 import torch
 import numpy as np
@@ -19,16 +16,26 @@ import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import collections
-from skvideo.io import vwrite
+
 from dummy_robot_arm1 import get_debug_loaders
 from types import SimpleNamespace
 from tqdm import tqdm
 import tempfile
 
+
 GENERATE_TRAJECTORY = False
 GRIPPER_OPEN_STATE = 0.02
 
 
+'''
+test RFMP on Pick & Place real robot experiment
+2 way to get observation:  
+1. 'infer'  uses observation from real robot
+2. 'infer_with_dataloader': uses observation from data loadar
+'''
+
+
+# get end effector state
 def get_info(rpc):
     arm_state = rpc.get_robot_state()
     pose_loc = arm_state.pose.vec(quat_order="wxyz")
@@ -36,8 +43,19 @@ def get_info(rpc):
     return pose_loc, gripper_state
 
 
+# get image from Realsense and crop the image
 def get_image(rs_recorder, transform_cam, device, show_on_screen=True, fix_img_list=None, use_grip_img=False,
               grip_img_list=None):
+    '''
+    rs_recorder: realsense interface
+    tranfor,_cam: torchvision transform module to resize image
+    device: cuda or cpu
+    show_on_screen: whether to visualize during testing
+    fix_img_list: a list, save for making video
+    use_grip_img:  bool variable, whether to use in-hand camera observation
+    grip_img_list: a list, saved for making video
+    '''
+
     realsense_frames = rs_recorder.get_frame()
     to_plot = rs_recorder._visualize_frame(realsense_frames).copy()
     # if show_on_screen:
@@ -76,7 +94,16 @@ def get_image(rs_recorder, transform_cam, device, show_on_screen=True, fix_img_l
     # SHAPE 1 * 3 * 480 * 640
 
 
+# get observation condition vector when testing on real robot
 def get_ref(state_list, grip_state_list, fix_img_list, grip_img_list, model):
+    ''' get the observation condition vector
+
+    state_list: list containing past 2 frame end effector state
+    grip_state_list: list containing past 2 frame gripper state
+    fix_img_list: containing past 2 frame over-the-shoulder camera observation
+    grip_img_list: containing past 2 frame
+    model: RFMP model
+    '''
     pre_fix_img = fix_img_list[-2]
     cur_fix_img = fix_img_list[-1]
     pre_grip_img = grip_img_list[-2]
@@ -103,7 +130,16 @@ def get_ref(state_list, grip_state_list, fix_img_list, grip_img_list, model):
     return torch.cat((img_scalar, xref_pos_quat, xref_gripper), axis=1).float()
 
 
+# get observation condition vector when testing with dataloadar, no connection with real robot
 def get_ref_infer_with_dataloader(state_list, grip_state_list, fix_img_list, grip_img_list, model, use_s_loadar=False):
+    '''get obseravtion condition vector when getting observation from dataloader
+    state_list: list containing past 2 frame end effector state
+    grip_state_list: list containing past 2 frame gripper state
+    fix_img_list: containing past 2 frame over-the-shoulder camera observation
+    grip_img_list: containing past 2 frame
+    model: RFMP model
+    use-s_loadar: whether to use state information from dataloadar or read from real robot
+    '''
     pre_fix_img = fix_img_list[-2].to(model.device)
     cur_fix_img = fix_img_list[-1].to(model.device)
     pre_grip_img = grip_img_list[-2].to(model.device)
@@ -138,8 +174,22 @@ def get_ref_infer_with_dataloader(state_list, grip_state_list, fix_img_list, gri
     return torch.cat((img_scalar, xref_pos_quat, xref_gripper), axis=1).float()
 
 
-def infer(model, rpc, cfg, steps=100, execute_steps=8, obs_horizon=2, ctr_grip=False, video_name='', no_crop=True,
+def infer(model, rpc, cfg, execute_steps=8, obs_horizon=2, ctr_grip=False, video_name='', no_crop=True,
           crop_percent=0.1, ode_num=11, save_folder=''):
+    '''  experiment with RFMP on task Pick Place
+    model: RFMP model
+    rpc: interface with robot
+    cfg: config file
+    execute_steps: execution horizon
+    obs_horizon: observation horizon
+    ctr_grip: whether control gripper
+    video_name: the name of saved video
+    np_crop: True, no crop of image; False, Centercrop
+    crop_percent: crop percent when no_crop False
+    ode_num: ODE solving steps
+    save_folder: folder to save experiment data
+    '''
+
     if not os.path.exists(save_folder):
         os.mkdir(save_folder)
     step = 0
@@ -198,7 +248,7 @@ def infer(model, rpc, cfg, steps=100, execute_steps=8, obs_horizon=2, ctr_grip=F
         # print('pred action', actions[..., :3])
         for id, action in enumerate(actions[1:1 + execute_steps]):
             predict_action_list.append(action)
-            # rpc.goto_cartesian_pose_nonblocking(action[:3], action[3:7], GENERATE_TRAJECTORY)
+            rpc.goto_cartesian_pose_nonblocking(action[:3], action[3:7], GENERATE_TRAJECTORY)
             # rpc.goto_cartesian_pose_nonblocking(action[:3], np.array([0., 1., 0., 1.]), GENERATE_TRAJECTORY)
             if ctr_grip:
                 if gripper_state >= GRIPPER_OPEN_STATE:  # if open
@@ -228,7 +278,7 @@ def infer(model, rpc, cfg, steps=100, execute_steps=8, obs_horizon=2, ctr_grip=F
             # save_array_safe(predict_action_list,
             #                 save_folder + '/action' + video_name + '_exc' + str(execute_steps) + '.npy')
             # save_array_safe(infer_time_list, save_folder + '/time_' + video_name + '.npy')
-            save_array_safe(infer_time_list, save_folder + '/time_ode' + str(ode_num - 1) + '.npy')
+            save_array_safe(infer_time_list, save_folder + '/time_ode' + str(ode_num) + '.npy')
     # vwrite('infer.mp4', fix_img_list)
 
 
@@ -249,6 +299,16 @@ def save_array_safe(arr, filename):
 
 
 def infer_with_dataloader(model, rpc, cfg, execute_steps=8, obs_horizon=2, data_loader=None, pos_use_loadar=False):
+    '''experiment with RFMP on real robot but get observation from dataloadar
+
+    model: RFMP model
+    rpc: interface with robot
+    cfg: config file
+    execute_steps: execution horizon
+    obs_horizon: observation horizon
+    data_loadar: data loadar
+    pos_use_loadar: whether to use state information from dataloadar or read from real robot
+    '''
     transform_cam = T.Compose([T.Resize((480, 640), antialias=None), ])
     rs_recorder = RealsenseRecorder(
         height=480,
@@ -327,27 +387,34 @@ def infer_with_dataloader(model, rpc, cfg, execute_steps=8, obs_horizon=2, data_
 
 
 if __name__ == '__main__':
+    # specif info for used model
     add_info = '_nogripimg_resnet_onlytarget_normalize_midimg_snet_imgranddcrop'
     #   _withgripimg_resnet_onlytarget_normalize_midimg_snet_imgranddcrop
     # _nogrip_snet_mimg_rcrop_selectdemoforgen
+
+    # load cfg
     cfg = OmegaConf.load('refcond_rfm_euclidean_dish_grasp.yaml')
     checkpoints_dir = "checkpoints/checkpoints_rfm_" + cfg.data + \
                       "_n" + str(cfg.n_pred) + "_r" + str(cfg.n_ref) + "_c" + str(cfg.n_cond) + "_w" + str(
         cfg.w_cond) + cfg.model_type + add_info
-    # model = ManifoldVisionTrajectoriesDishGraspFMLitModule(cfg)
+    # construct model
     model = ManifoldVisionTrajectoriesResNetDishGraspFMLitModule(cfg)
 
     best_checkpoint = glob(checkpoints_dir + "/**/epoch**.ckpt", recursive=True)[0]
     last_checkpoint = './' + checkpoints_dir + '/last.ckpt'
     model_checkpoint = './' + checkpoints_dir + '/model.ckpt'
+    # load model from checkpoints
     model = model.load_from_checkpoint(best_checkpoint, cfg=cfg)
     model.to(torch.device('cuda'))
     model.small_var = False
     print('normalize', model.normalize)
     print('use gripper img ', model.use_gripper_img)
 
+    # connect to Robot
     rpc = RPCInterface("10.87.170.254")  # 10.87.172.60
 
+
+    # data loadar when doing inference with dataloadar to get image or robot state or both
     data_folder_path = '/home/dia1rng/hackathon/hachaton_cuponboard_new_dataset/cuponplate1_robot_demos'
     args = SimpleNamespace()
 
@@ -368,25 +435,21 @@ if __name__ == '__main__':
     train_loader, val_loader, _ = get_debug_loaders(batch_size=1, args=args, data_folder=data_folder_path,
                                                     drop_last=True)
 
-    # for _ in range(5):
-    #     rpc.open_gripper()
-
+    # initialize the robot state
     success = rpc.goto_home_joint()
     target_pose_1 = np.array([0.42, 0.08, 0.30, 0.0, 1.0, 0.0, 0.0])
-    # target_pose_1 = np.array([0.47, 0.10, 0.30, 0.0, 1.0, 0.0, 0.0])
-    # target_pose_1[2] = 0.2
     success = rpc.activate_cartesian_nonblocking_controller()
 
     rpc.goto_cartesian_pose_blocking(target_pose_1[:3], target_pose_1[3:], True)
-    # time.sleep(0.5)
+    time.sleep(0.5)
     if success:
         print("controller activated successfully")
     else:
         print("control activation failed :(")
 
     execute_steps = 8
-    ode_num = 11  # 3 4 6 11
-    save_folder = checkpoints_dir + '/time'
+    ode_num = 2  # 3 4 6 11
+    save_folder = checkpoints_dir + '/fast_time'
     if not os.path.exists(save_folder):
         os.mkdir(save_folder)
     infer(model, rpc, cfg, steps=100, execute_steps=execute_steps, ctr_grip=True, video_name='tttt', no_crop=False,
