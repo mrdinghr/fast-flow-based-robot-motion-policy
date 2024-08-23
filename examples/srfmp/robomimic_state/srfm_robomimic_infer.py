@@ -1,9 +1,7 @@
 import numpy as np
 from omegaconf import OmegaConf
-import sys
 
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/stable_flow')
-from stable_model_trajs_robomimic_pl_learntau import SRFMRobomimicLTModule
+from stable_flow.stable_model_trajs_robomimic_pl_learntau import SRFMRobomimicLTModule
 from glob import glob
 import torch
 import robomimic.utils.env_utils as EnvUtils
@@ -22,7 +20,16 @@ from tqdm import tqdm
 import os
 
 
+'''
+test SRFMP on robomimic tasks with state-based observation
+'''
+
+
+# get observation condition vector
 def get_ref(obs_deque):
+    '''
+    get observation condition vector
+    '''
     pre_xref_object = obs_deque[0]['object']
     cur_xref_object = obs_deque[1]['object']
     xref_object = np.vstack((pre_xref_object, cur_xref_object))
@@ -39,7 +46,19 @@ def get_ref(obs_deque):
     return torch.from_numpy(xref)
 
 
+# test with specific ODE steps
+# visualize_onscreen: whether show the vidoe during test
 def infer(model, ode_steps=11, max_steps=500, visualize_onscreen=False, execution_steps=8):
+    '''once experiment: SRFMP on robomimic tasks with state-based observation
+
+    model: SRFMP model
+    ode_steps: ODE steps
+    max_steps: maximum roll outs
+
+    return:
+    success or fail, recorded transition trajectory, recorded rotation trajectory
+    '''
+    # initialize robomimic env
     env_meta = FileUtils.get_env_metadata_from_dataset(
         '/home/dia1rng/robomimic/datasets/' + cfg.task + '/ph/low_dim_v141.hdf5')
 
@@ -50,12 +69,13 @@ def infer(model, ode_steps=11, max_steps=500, visualize_onscreen=False, executio
         render_offscreen=False,
         use_image_obs=False,
     )
+    # get initial observation
     obs = env.reset()
-    state_dict = env.get_state()
     cur_step = 0
     done = False
     obs_deque = collections.deque([obs] * cfg.n_ref, maxlen=cfg.n_ref)
     B = 1
+    # record the trajectory seperately
     trans_trajectory = [obs['robot0_eef_pos']]
     rotation_trajectory = [obs['robot0_eef_quat']]
     while cur_step < max_steps and not done:
@@ -78,14 +98,18 @@ def infer(model, ode_steps=11, max_steps=500, visualize_onscreen=False, executio
                 plt.pause(0.02)
                 plt.clf()
             # print(done)
+            # early stop after success
             if reward > 0.4:
                 return True, trans_trajectory, rotation_trajectory
     return False, trans_trajectory, rotation_trajectory
 
 
 if __name__ == '__main__':
+    # load config
     cfg = OmegaConf.load('refcond_srfm_robomimic.yaml')
     cfg.model_type = 'Unet'
+
+    # set the config for Robomimic env
     config = config_factory(algo_name='bc')
     config.train.data = '/home/dia1rng/robomimic/datasets/' + cfg.task + '/ph/low_dim_v141.hdf5'
     config.train.batch_size = cfg.optim.batch_size
@@ -97,7 +121,8 @@ if __name__ == '__main__':
     ObsUtils.initialize_obs_utils_with_config(config)
     model = SRFMRobomimicLTModule(cfg)
 
-    save_gap = 10
+    # set checkpoints
+    save_gap = 20
     save_num = 5
     if cfg.task == 'lift':
         max_steps = 300
@@ -129,7 +154,8 @@ if __name__ == '__main__':
     #     print('success rate with ode steps ' + str(ode_steps) + ' ' + str(total_success_times / 50))
     #     np.save(checkpoints_dir + '/ode' + str(ode_steps) + '.npy', total_success_times / 50)
 
-    for epoch in range(1, 1 + save_num):
+    # test with different checkpoints, ODE steps, seeds
+    for epoch in range(5, 1 + save_num):
         if not os.path.exists(checkpoints_dir + '/epoch' + str(save_gap * epoch - 1)):
             os.mkdir(checkpoints_dir + '/epoch' + str(save_gap * epoch - 1))
         if save_gap * epoch - 1 < 10:
@@ -143,12 +169,12 @@ if __name__ == '__main__':
                 save_gap * epoch - 1) + 'Unet' + cfg.task + '.ckpt'
         model = SRFMRobomimicLTModule(cfg)
         model = model.load_from_checkpoint(cur_epoch_checkpoint, cfg=cfg)
-        model.small_var = False
+        model.small_var = True
         model.to(torch.device('cuda'))
         # save_folder = checkpoints_dir + '/epoch' + str(save_gap * epoch - 1)
         # if not os.path.exists(save_folder):
         #     os.mkdir(save_folder)
-        for ode_steps in tqdm([10]):
+        for ode_steps in tqdm([1, 2, 3, 5, 10]):
             save_folder = checkpoints_dir + '/epoch' + str(save_gap * epoch - 1) + '/ode' + str(ode_steps)
             if not os.path.exists(save_folder):
                 os.mkdir(save_folder)
