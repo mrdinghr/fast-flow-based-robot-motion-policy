@@ -8,26 +8,26 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks import LearningRateMonitor
 
-import sys
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/stable_flow')
-from stable_model_vision_rotatemug_pl_learntau import SRFMRotateMugVisionResnetTrajsModuleLearnTau
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/data/real_robot')
-from vision_audio_robot_arm import get_loaders
+from stable_flow.stable_model_vision_rotatemug_pl_learntau import SRFMRotateMugVisionResnetTrajsModuleLearnTau
+from data.real_robot.vision_audio_robot_arm import get_loaders
 from types import SimpleNamespace
 
 import argparse
 
 
-if __name__ == '__main__':
-    # the name of dataset: dish_grasp
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--model_type', default='tMLP', type=str)
-    args = parser.parse_args()
+'''
+train SRFMP on rotate mug real robot task
 
-    print('load args')
+Note: change 'data_dir' in 'refcond_rfm_rotate_mug.yaml' to where you save the recorded demo
+'''
+
+
+if __name__ == '__main__':
     # Load config
     cfg = OmegaConf.load('srfm_rotate_mug.yaml')
     cfg.model_type = 'Unet'
+
+    # get data loader
     data_folder = cfg.data_dir
     data_args = SimpleNamespace()
     data_args.ablation = 'vf_vg'
@@ -43,13 +43,14 @@ if __name__ == '__main__':
     data_args.catg = "resample"
     data_args.norm_type = "limit"
     data_args.smooth_factor = (1e-5, 1e-5, 1e-5, 1e-5, 1e-5, 1e-5)
-    # Load dataset
     train_loader, val_loader, _ = get_loaders(batch_size=cfg.optim.batch_size, args=data_args, data_folder=data_folder,
                                                     drop_last=False, debug=False)
     print('data load')
     # Construct model
     model = SRFMRotateMugVisionResnetTrajsModuleLearnTau(cfg)
     print(model)
+
+    # specific info for current training
     add_info = '_tttt'
     # Checkpointing, logging, and other misc.
     checkpoints_dir = "checkpoints/checkpoints_rfm_" + cfg.data + \

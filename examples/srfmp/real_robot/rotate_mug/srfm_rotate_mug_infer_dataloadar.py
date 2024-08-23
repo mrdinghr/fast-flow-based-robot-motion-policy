@@ -1,11 +1,8 @@
 import matplotlib.pyplot as plt
-import sys
 
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/stable_flow')
-from stable_model_vision_rotatemug_pl_learntau import SRFMRotateMugVisionResnetTrajsModuleLearnTau
+from stable_flow.stable_model_vision_rotatemug_pl_learntau import SRFMRotateMugVisionResnetTrajsModuleLearnTau
 
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/data/real_robot')
-from vision_audio_robot_arm import get_loaders
+from data.real_robot.vision_audio_robot_arm import get_loaders
 from omegaconf import OmegaConf
 from glob import glob
 from types import SimpleNamespace
@@ -17,6 +14,11 @@ import cv2
 import matplotlib
 
 matplotlib.use('TkAgg')
+
+
+'''
+compare SRFMP generated result with recorded demonstration
+'''
 
 
 def compare_demo_gen(batch, action):

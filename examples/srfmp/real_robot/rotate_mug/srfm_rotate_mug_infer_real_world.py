@@ -1,15 +1,13 @@
 import os.path
-import sys
 
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/stable_flow')
-from stable_model_vision_rotatemug_pl_learntau import SRFMRotateMugVisionResnetTrajsModuleLearnTau
+from stable_flow.stable_model_vision_rotatemug_pl_learntau import SRFMRotateMugVisionResnetTrajsModuleLearnTau
 from omegaconf import OmegaConf
 from glob import glob
 
 from tami_clap_candidate.rpc_interface.rpc_interface import RPCInterface
 from tami_clap_candidate.sensors.realsense import Preset, RealsenseRecorder
 import time
-import cv2
+
 import torchvision.transforms as T
 import torch
 import numpy as np
@@ -20,7 +18,6 @@ matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import collections
 
-from types import SimpleNamespace
 from tqdm import tqdm
 import tempfile
 
@@ -28,15 +25,36 @@ GENERATE_TRAJECTORY = False
 GRIPPER_OPEN_STATE = 0.02
 
 
+'''
+test SRFMP Rotate Mug task on real robot
+'''
+
+
+# robot end effector info
 def get_info(rpc):
+    '''
+    get state of end effector from rpc interface
+    '''
     arm_state = rpc.get_robot_state()
     pose_loc = arm_state.pose.vec(quat_order="wxyz")
     gripper_state = arm_state.gripper[0]
     return pose_loc, gripper_state
 
 
+# image from Realsense
 def get_image(rs_recorder, transform_cam, device, show_on_screen=True, fix_img_list=None, use_grip_img=False,
               grip_img_list=None):
+    '''
+    get image from realsense interface
+
+    rs_recorder: realsense interface
+    transform_cam: transform module from torchvision to resize and crop image
+    device: cpu or cuda
+    show_on_screen: whether visualize camera on laptop screen during test
+    fix_img_list: list of past 2 frame over-the-shoulder camera observation
+    use_grip_img: whether use gripper camera as observation
+    grip_img_list: list of past 2 frame in-hand camera observation
+    '''
     realsense_frames = rs_recorder.get_frame()
     to_plot = rs_recorder._visualize_frame(realsense_frames).copy()
     # if show_on_screen:
@@ -75,7 +93,16 @@ def get_image(rs_recorder, transform_cam, device, show_on_screen=True, fix_img_l
     # SHAPE 1 * 3 * 480 * 640
 
 
+# observation condition vector
 def get_ref(state_list, grip_state_list, fix_img_list, grip_img_list, model):
+    ''' get observation condition vector
+
+    state_list: list of past 2 frame end effector state
+    grip_state_list: list of past 2 frame gripper state
+    fix_img_list: list of past 2 frame over-the-shoulder camera observation
+    grip_img_list: list of past 2 frame in-hand camera observation
+    model: SRFMP model
+    '''
     pre_fix_img = fix_img_list[-2]
     cur_fix_img = fix_img_list[-1]
     pre_grip_img = grip_img_list[-2]
@@ -102,8 +129,25 @@ def get_ref(state_list, grip_state_list, fix_img_list, grip_img_list, model):
     return torch.cat((img_scalar, xref_pos_quat, xref_gripper), axis=1).float()
 
 
+# once experiment on real robot
 def infer(model, rpc, cfg, execute_steps=8, obs_horizon=2, ctr_grip=False, video_name='', no_crop=True,
           adp=False, ode_steps=10, crop_percent=0.2, save_folder=''):
+    '''
+    once experiment of SRFMP on Rotate Mug task on real robot
+
+    model: SRFMP model
+    rpc: rpc interface
+    cfg: config file
+    execute_steps: execution horizon
+    obse_horizon: observation horizon
+    ctr_grip: whether to control gripper or not
+    video_name: the name of saved video
+    no_crop: whether not to crop image or crop
+    adp: adaptive step size for ODE solving. this is not used anymore
+    ode_steps: ODE solving steps
+    crop_percent: image crop percentage
+    save_folder: where to save the video and experiment data
+    '''
     step = 0
     # resize Height * Width
     if no_crop:
@@ -209,45 +253,6 @@ def save_array_safe(arr, filename):
     os.replace(temp_file.name, filename)
 
 
-def infer_with_dataloader(model, rpc, cfg, execute_steps=8, obs_horizon=2, data_loader=None, pos_use_loadar=False):
-    crop_height = int(cfg.image_height * 0.9)
-    crop_width = int(cfg.image_width * 0.9)
-    transform_cam = T.Compose(
-        [T.Resize((cfg.image_height, cfg.image_width), antialias=None), T.CenterCrop((crop_height, crop_width)), ])
-    rs_recorder = RealsenseRecorder(
-        height=480,
-        width=640,
-        fps=30,
-        record_depth=False,
-        depth_unit=0.001,
-        preset=Preset.HighAccuracy,
-        memory_first=True,
-    )
-
-    fix_img_real_list = []
-    real_state = []
-    demo_state = []
-    pred_state = []
-    for i, batch in tqdm(enumerate(data_loader)):
-        if i % execute_steps == 0:
-            _, xref, xcond, _ = model.unpack_predictions_reference_conditioning_samples(batch)
-            start_time = time.time()
-            actions = model.sample_all(1, model.device, xref=xref, xcond=xcond, different_sample=True, ode_steps=10,
-                                       adp=False)
-            print('tau series ', actions[:, 0, -1])
-            actions = actions[-1, 0, :-1].reshape((cfg.n_pred, model.dim))
-            if cfg.normalize_pos_quat:
-                actions[..., :-1] = model.denormalize_pos_quat(actions[..., :-1])
-                actions[..., -1] = model.denormalize_grip(actions[..., -1])
-            for idx, action in enumerate(actions[1: 1 + execute_steps]):
-                fix_img = batch['observation']['v_fix']
-                plt.imshow(fix_img[0, -1].moveaxis(0, -1))
-                plt.draw()
-                plt.pause(0.2)
-                plt.clf()
-                rpc.goto_cartesian_pose_nonblocking(action[:3], action[3:7], GENERATE_TRAJECTORY)
-
-
 if __name__ == '__main__':
     add_info = 'lambdataux25_harddata'
     # _fewepochs_smallertaunet_uncorrelattauvf
@@ -255,12 +260,14 @@ if __name__ == '__main__':
     checkpoints_dir = "checkpoints/checkpoints_rfm_" + cfg.data + \
                       "_n" + str(cfg.n_pred) + "_r" + str(cfg.n_ref) + "_c" + str(cfg.n_cond) + "_w" + str(
         cfg.w_cond) + cfg.model_type + add_info
-    # model = ManifoldVisionTrajectoriesDishGraspFMLitModule(cfg)
+
+    # construct model
     model = SRFMRotateMugVisionResnetTrajsModuleLearnTau(cfg)
 
     best_checkpoint = glob(checkpoints_dir + "/**/epoch**.ckpt", recursive=True)[0]
     last_checkpoint = './' + checkpoints_dir + '/last.ckpt'
     model_checkpoint = './' + checkpoints_dir + '/model.ckpt'
+    # load model from checkpoint
     model = model.load_from_checkpoint(best_checkpoint, cfg=cfg)
     model.to(torch.device('cuda'))
     model.small_var = True
@@ -269,26 +276,11 @@ if __name__ == '__main__':
 
     rpc = RPCInterface("10.87.170.254")  # 10.87.172.60
 
-    # data_folder_path = '/home/dia1rng/hackathon/hachaton_cuponboard_new_dataset/cuponplate1_robot_demos'
-    # args = SimpleNamespace()
-    #
-    # args.ablation = 'vf_vg'
-    # args.num_stack = 2
-    # args.frameskip = 1
-    # args.no_crop = False
-    # args.crop_percent = 0.3
-    # args.resized_height_v = cfg.image_height
-    # args.resized_width_v = cfg.image_width
-    # args.len_lb = cfg.n_pred - 1
-    # args.sampling_time = 250
-    # args.norm = False
-    # args.source = False
-    # train_loader, val_loader, _ = get_debug_loaders(batch_size=1, args=args, data_folder=data_folder_path,
-    #                                                 drop_last=True)
     for _ in range(5):
         rpc.open_gripper()
 
     success = rpc.goto_home_joint()
+    # initialize end effector position
     target_pose_1 = np.array([0.43, 0.045, 0.30, 0.0, 1.0, 0.0, 0.0])
     target_pose_1 = np.array([0.37888516710211556,
                               0.00510292887852903276,
@@ -297,17 +289,6 @@ if __name__ == '__main__':
                               -0.9972750881656733,
                               0.053389844167177965,
                               0.05082199367762835])
-    # target_pose_1 = np.array([
-    #     0.38220130741491637,
-    #     0.010190241775998542,
-    #     0.36850870711719125,
-    #     0.01236478116009615,
-    #     -0.9978602092071823,
-    #     0.049083418598210055,
-    #     0.04138759580567998
-    # ])
-    # target_pose_1 = np.array([0.4, 0.0, 0.30, 0.0, 1.0, 0.0, 0.0])
-    # target_pose_1[2] += 0.05
     success = rpc.activate_cartesian_nonblocking_controller()
 
     rpc.goto_cartesian_pose_blocking(target_pose_1[:3], target_pose_1[3:], True)
