@@ -4,10 +4,7 @@ import time
 import numpy as np
 import torch
 from omegaconf import OmegaConf
-
 from tqdm.auto import tqdm
-from IPython.display import Video
-from skvideo.io import vwrite
 import collections
 from glob import glob
 import cv2
@@ -16,29 +13,40 @@ import matplotlib
 matplotlib.use('Agg')
 
 from manifm.datasets import _get_dataset
-import sys
 
-sys.path.append('/home/dia1rng/hackathon/flow-matching-policies/stable_flow')
-from stable_model_vision_trajs_pl_learntau import SRFMVisionResnetTrajsModuleLearnTau
+from stable_flow.stable_model_vision_trajs_pl_learntau import SRFMVisionResnetTrajsModuleLearnTau
 from diffusion_policy.env.pusht.pusht_image_env import PushTImageEnv
-from diffusion_policy.dataset.pusht_state_dataset import normalize_data, unnormalize_data
 
 import torchvision.transforms as Transform
 
-sys.path.append('/home/dia1rng/safe_flow_motion_policy/flow-matching-policies/examples/datasets')
-from create_pusht_sphere_image_dataset import project_sphere_action_back, \
+from examples.datasets.create_pusht_sphere_image_dataset import project_sphere_action_back, \
     project_to_sphere_agent_pos, plt3d_sphere_project_img
 import shutil
 
-# if torch.cuda.is_available():
-#     device = torch.cuda.current_device()
-# else:
-#     device = 'cpu'
-device = 'cpu'
+
+device = torch.device('cuda')
+
+
+'''
+test SRFMP Sphere PushT task
+'''
 
 
 def inference(model, obs_horizon, pred_horizon, action_horizon, seed=100000, crop=False, adp=False, ode_steps=10,
               scale=1.5, max_steps=500, new_unpack=False):
+    '''once experiment of SRFMP on SPhere PushT task
+                model: SRFMP model
+                obs_horizon: observation horizon
+                pred_horizon: prediction horizon
+                action_horizon: execution horizon
+                seed: seed for env initialization
+                crop: whether to crop image
+                adp: adaptive step size during ODE solving
+                ode_steps: ODE solving steps
+                scale: ratio of euclidean pusht env edge length and sphere to project
+                max_steps: maximum roll outs
+                new_unpack: sequential or parallel observation condition vector for different time frame
+        '''
     if not os.path.exists(checkpoints_dir + '/automatic_dt/ode_step' + str(ode_steps)):
         os.mkdir(checkpoints_dir + '/automatic_dt/ode_step' + str(ode_steps))
     if not os.path.exists(checkpoints_dir + '/automatic_dt/ode_step' + '/seed' + str(seed) + '/sp_img'):
@@ -46,6 +54,7 @@ def inference(model, obs_horizon, pred_horizon, action_horizon, seed=100000, cro
         os.mkdir(checkpoints_dir + '/automatic_dt/ode_step' + str(ode_steps) + '/seed' + str(seed) + '/sp_img')
         os.mkdir(checkpoints_dir + '/automatic_dt/ode_step' + str(ode_steps) + '/seed' + str(seed) + '/sp_infer')
 
+    # initial PushT env
     env = PushTImageEnv()
     # use a seed >200 to avoid initial states seen in the training dataset
     env.seed(seed)
@@ -80,6 +89,7 @@ def inference(model, obs_horizon, pred_horizon, action_horizon, seed=100000, cro
             sp_images = np.zeros((2, 3, 100, 100))
             for id in range(nimages.shape[0]):
                 cur_img = nimages[id]
+                # save image for observation condition
                 sp_cur_img = plt3d_sphere_project_img(255 * np.moveaxis(cur_img, 0, -1), scale=scale,
                                                       save_dir=checkpoints_dir + '/automatic_dt/ode_step' + str(ode_steps) + '/seed' + str(
                                                           seed) + '/sp_infer' + '/infer' + str(id))
@@ -161,16 +171,7 @@ def inference(model, obs_horizon, pred_horizon, action_horizon, seed=100000, cro
     # print out the maximum target coverage
     print('Score: ', max(rewards))
 
-    # visualize
-    # vwrite(checkpoints_dir + '/automatic_dt/ode_step' + str(ode_steps) + '/seed' + str(seed) + '/euclidean' + str(
-    #     action_horizon) + 'seed' + str(seed) + '_ode' + str(ode_steps) + '_smallvar.mp4', imgs)
-    # Video(checkpoints_dir + '/automatic_dt/ode_step' + str(ode_steps) + '/seed' + str(seed) + '/euclidean' + str(action_horizon) + str(
-    #     seed) + '_ode' + str(
-    #     ode_steps) + '_smallvar.mp4',
-    #       embed=True,
-    #       width=256,
-    #       height=256)
-
+    # save the video and delete saved image
     make_video(checkpoints_dir + '/automatic_dt/ode_step' + str(ode_steps) + '/seed' + str(seed) + '/sp_img')
     shutil.rmtree(checkpoints_dir + '/automatic_dt/ode_step' + str(ode_steps) + '/seed' + str(seed) + '/sp_img')
     return max(rewards)
@@ -194,6 +195,9 @@ def make_video(datadir):
 
 
 def get_ordered_file_list(file_list):
+    '''
+    to make the file list as name order
+    '''
     num_list = [int(file[:-4]) for file in file_list]
     sorted_lists = sorted(zip(num_list, file_list))
     _, file_list = zip(*sorted_lists)
@@ -201,7 +205,6 @@ def get_ordered_file_list(file_list):
 
 
 if __name__ == '__main__':
-    # torch.manual_seed(3047)
     # Load config
     add_info = '_lambdax2.5'  # _learntau_new_encoder_lambdatau
     cfg = OmegaConf.load('refcond_srfm_sphere_learntau_vision_pusht.yaml')
@@ -210,9 +213,6 @@ if __name__ == '__main__':
                       "_n" + str(cfg.n_pred) + "_r" + str(cfg.n_ref) + "_c" + str(cfg.n_cond) + "_w" + str(
         cfg.w_cond) + cfg.model_type + add_info
 
-    # Number of steps and actions per step
-    # n_actions = 1
-    # n_steps = int(200 / n_actions)
     # Load dataset
     dataset, _ = _get_dataset(cfg)
 
@@ -222,7 +222,7 @@ if __name__ == '__main__':
     model.small_var = False
     best_checkpoint = glob(checkpoints_dir + "/**/epoch**.ckpt", recursive=True)[0]
     last_checkpoint = './' + checkpoints_dir + '/last.ckpt'
-    # model_checkpoint = './' + checkpoints_dir + '/model.ckpt'
+    # load model from checkpoint
     model = model.load_from_checkpoint(best_checkpoint, cfg=cfg)
     model.to(torch.device('cuda'))  # cuda  cpu
 

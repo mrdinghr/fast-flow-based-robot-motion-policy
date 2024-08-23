@@ -27,6 +27,14 @@ def compare_with_dataloadar(model, seed=66, scale=1.5, ode_steps=5):
 
 
 def plot_actions_on_env(env, model, scale=1.5, ode_steps=5, crop=True, seed=66):
+    '''
+    env: Euclidean PushT env
+    model: SRFMP model
+    scale: ratio of euclidean pusht env edge length and sphere to project
+    ode_steps: ODE solving steps
+    crop: whether to crop image
+    seed: env initial seed
+    '''
     B = 1
     obs = env.reset()
     obs_deque = collections.deque([obs] * model.n_ref, maxlen=model.n_ref)
